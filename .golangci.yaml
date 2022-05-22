@@ -1,0 +1,11 @@
+---
+linters:
+  enable-all: true
+  disable:
+    - exhaustivestruct
+    - godox
+    - goerr113
+    - gomnd
+    - ireturn
+    - varnamelen
+    - wrapcheck
