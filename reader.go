@@ -8,9 +8,12 @@ import (
 	"io"
 
 	"github.com/bodgit/rvz/internal/packed"
+	"github.com/bodgit/rvz/internal/zero"
 )
 
 const (
+	rvzMagic uint32 = 0x52565a01 // 'R', 'V', 'Z', 0x01
+
 	compressed     uint32 = 1 << 31
 	compressedMask        = compressed - 1
 
@@ -111,15 +114,16 @@ func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
 
 func (r *reader) groupReader(g int) (rc io.ReadCloser, err error) {
 	group := r.group[g]
-	if group.compressed() {
+
+	switch {
+	case group.compressed():
 		rc, err = r.decompressor(io.NewSectionReader(r.ra, group.offset(), group.size()))
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		if group.size() == 0 {
-			panic("rvz: all zeroes")
-		}
+	case group.size() == 0:
+		rc = io.NopCloser(io.LimitReader(zero.NewReader(), int64(r.disc.ChunkSize)))
+	default:
 		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
 	}
 
@@ -191,7 +195,7 @@ func (r *reader) readGroup() error {
 }
 
 // NewReader returns a new io.Reader that reads and decompresses from ra.
-//nolint:cyclop
+//nolint:cyclop,funlen
 func NewReader(ra io.ReaderAt) (io.Reader, error) {
 	r := new(reader)
 	r.ra = ra
@@ -204,6 +208,10 @@ func NewReader(ra io.ReaderAt) (io.Reader, error) {
 	mr := io.MultiReader(io.TeeReader(io.NewSectionReader(ra, 0, size), h), io.NewSectionReader(ra, size, sha1.Size))
 	if err := binary.Read(mr, binary.BigEndian, &r.header); err != nil {
 		return nil, err
+	}
+
+	if r.header.Magic != rvzMagic {
+		return nil, errors.New("rvz: bad magic")
 	}
 
 	if !bytes.Equal(r.header.FileHeadHash[:], h.Sum(nil)) {
