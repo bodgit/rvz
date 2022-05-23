@@ -38,7 +38,7 @@ func (pr *paddingReader) Read(p []byte) (int, error) {
 }
 
 // NewReader returns an io.Reader that generates a stream of GameCube and Wii
-// padding data. The PRNG is seeded from the io.Reader r. The offset if where
+// padding data. The PRNG is seeded from the io.Reader r. The offset of where
 // this padded stream starts relative to the beginning of the uncompressed
 // disc image is also required.
 func NewReader(r io.Reader, offset int64) (io.Reader, error) {
