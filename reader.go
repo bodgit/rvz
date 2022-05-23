@@ -160,8 +160,38 @@ func (r *reader) Read(p []byte) (n int, err error) {
 	return
 }
 
+func (r *reader) readRaw() error {
+	cr, err := r.decompressor(r.disc.rawReader(r.ra))
+	if err != nil {
+		return err
+	}
+	defer cr.Close()
+
+	r.raw = make([]raw, r.disc.NumRawData)
+	if err = binary.Read(cr, binary.BigEndian, &r.raw); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *reader) readGroup() error {
+	cr, err := r.decompressor(r.disc.groupReader(r.ra))
+	if err != nil {
+		return err
+	}
+	defer cr.Close()
+
+	r.group = make([]group, r.disc.NumGroup)
+	if err = binary.Read(cr, binary.BigEndian, &r.group); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // NewReader returns a new io.Reader that reads and decompresses from ra.
-//nolint:cyclop,funlen
+//nolint:cyclop
 func NewReader(ra io.ReaderAt) (io.Reader, error) {
 	r := new(reader)
 	r.ra = ra
@@ -208,25 +238,13 @@ func NewReader(ra io.ReaderAt) (io.Reader, error) {
 		return nil, errors.New("rvz: partition hash doesn't match")
 	}
 
-	cr, err := r.decompressor(r.disc.rawReader(ra))
-	if err != nil {
-		return nil, err
-	}
-	defer cr.Close()
+	var err error
 
-	r.raw = make([]raw, r.disc.NumRawData)
-	if err := binary.Read(cr, binary.BigEndian, &r.raw); err != nil {
+	if err = r.readRaw(); err != nil {
 		return nil, err
 	}
 
-	cr, err = r.decompressor(r.disc.groupReader(ra))
-	if err != nil {
-		return nil, err
-	}
-	defer cr.Close()
-
-	r.group = make([]group, r.disc.NumGroup)
-	if err = binary.Read(cr, binary.BigEndian, &r.group); err != nil {
+	if err = r.readGroup(); err != nil {
 		return nil, err
 	}
 
