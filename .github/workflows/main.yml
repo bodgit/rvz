@@ -32,7 +32,7 @@ jobs:
         with:
           only-new-issues: true
       - name: Test
-        run: go test -v -coverprofile=cover.out ./...
+        run: go test -v -short -coverprofile=cover.out ./...
       - name: Send coverage
         uses: shogo82148/actions-goveralls@v1
         with:
