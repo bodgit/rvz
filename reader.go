@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/bodgit/rvz/internal/packed"
+	"github.com/bodgit/rvz/internal/util"
 	"github.com/bodgit/rvz/internal/zero"
 )
 
@@ -195,6 +196,14 @@ func (r *reader) readRaw() error {
 	r.raw = make([]raw, r.disc.NumRawData)
 	if err = binary.Read(cr, binary.BigEndian, &r.raw); err != nil {
 		return err
+	}
+
+	// Make sure every area starts on a sector boundary, which is mostly
+	// for the benefit of the area at the beginning of the disc
+	for i := range r.raw {
+		remain := r.raw[i].RawDataOff % util.SectorSize
+		r.raw[i].RawDataOff -= remain
+		r.raw[i].RawDataSize += remain
 	}
 
 	return nil
