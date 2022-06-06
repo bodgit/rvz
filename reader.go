@@ -12,6 +12,9 @@ import (
 )
 
 const (
+	// Extension is the conventional file extension used.
+	Extension = ".rvz"
+
 	rvzMagic uint32 = 0x52565a01 // 'R', 'V', 'Z', 0x01
 
 	compressed     uint32 = 1 << 31
