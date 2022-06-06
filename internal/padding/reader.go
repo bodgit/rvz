@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+
+	"github.com/bodgit/rvz/internal/util"
 )
 
 const (
@@ -62,7 +64,7 @@ func NewReader(r io.Reader, offset int64) (io.Reader, error) {
 		pr.advance()
 	}
 
-	if _, err := io.CopyN(io.Discard, pr, offset%0x8000); err != nil {
+	if _, err := io.CopyN(io.Discard, pr, offset%util.SectorSize); err != nil {
 		return nil, err
 	}
 
