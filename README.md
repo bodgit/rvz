@@ -11,7 +11,6 @@
 The [github.com/bodgit/rvz](https://github.com/bodgit/rvz) package reads the [RVZ disc image format](https://github.com/dolphin-emu/dolphin/blob/master/docs/WiaAndRvz.md) used by the [Dolphin emulator](https://dolphin-emu.org).
 
 * Handles all supported compression methods; Zstandard is only marginally slower to read than no compression. Bzip2, LZMA, and LZMA2 are noticeably slower.
-* Currently only GameCube disc images are supported.
 
 How to read a disc image:
 ```golang

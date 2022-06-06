@@ -4,6 +4,7 @@ go 1.17
 
 require (
 	github.com/bodgit/plumbing v1.2.0
+	github.com/connesc/cipherio v0.2.1
 	github.com/klauspost/compress v1.15.6
 	github.com/stretchr/testify v1.7.1
 	github.com/ulikunitz/xz v0.5.10
