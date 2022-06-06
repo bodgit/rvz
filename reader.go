@@ -266,6 +266,21 @@ func NewReader(ra io.ReaderAt) (io.Reader, error) {
 		return nil, errors.New("rvz: TODO non-GameCube disc")
 	}
 
+	switch r.disc.ChunkSize {
+	case util.SectorSize << 0: //  32 KiB
+	case util.SectorSize << 1: //  64 KiB
+	case util.SectorSize << 2: // 128 KiB
+	case util.SectorSize << 3: // 256 KiB
+	case util.SectorSize << 4: // 512 KiB
+	case util.SectorSize << 5: //   1 MiB
+		break
+	default:
+		// Multiple of 2 MiB
+		if r.disc.ChunkSize%(util.SectorSize<<6) != 0 {
+			return nil, errors.New("rvz: bad chunk size")
+		}
+	}
+
 	h.Reset()
 
 	if r.disc.NumPart > 0 {
