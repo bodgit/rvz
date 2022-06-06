@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/packed"
 	"github.com/bodgit/rvz/internal/util"
 	"github.com/bodgit/rvz/internal/zero"
@@ -90,7 +91,7 @@ type raw struct {
 	RawDataOff  uint64
 	RawDataSize uint64
 	GroupIndex  uint32
-	NumGroups   uint32
+	NumGroup    uint32
 }
 
 type group struct {
@@ -111,6 +112,11 @@ func (g *group) size() int64 {
 	return int64(g.Size & compressedMask)
 }
 
+type except struct {
+	Offset uint16
+	Hash   [sha1.Size]byte
+}
+
 type reader struct {
 	ra io.ReaderAt
 
@@ -120,9 +126,9 @@ type reader struct {
 	raw    []raw
 	group  []group
 
-	i      int
-	gr     io.ReadCloser
-	offset int64
+	r          io.Reader
+	offset     int64
+	nextOffset int64
 }
 
 func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
@@ -134,33 +140,129 @@ func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
 	return dcomp(r.disc.ComprData[0:r.disc.ComprDataLen], reader)
 }
 
-func (r *reader) groupReader(g int) (rc io.ReadCloser, err error) {
+//nolint:cyclop,unparam
+func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadCloser, exceptions []except, err error) {
 	group := r.group[g]
 
 	switch {
 	case group.compressed():
 		rc, err = r.decompressor(io.NewSectionReader(r.ra, group.offset(), group.size()))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	case group.size() == 0:
-		rc = io.NopCloser(io.LimitReader(zero.NewReader(), int64(r.disc.ChunkSize)))
+		limit := int64(r.disc.ChunkSize)
+		if partition {
+			limit = limit / util.SectorSize * (util.SectorSize - hashSize)
+		}
+
+		rc = io.NopCloser(io.LimitReader(zero.NewReader(), limit))
 	default:
 		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
 	}
 
-	if group.PackedSize != 0 {
-		rc, err = packed.NewReadCloser(rc, r.offset)
-		if err != nil {
-			return nil, err
+	//nolint:nestif
+	if partition {
+		wc := new(plumbing.WriteCounter)
+		tr := io.TeeReader(rc, wc)
+
+		var numExceptions uint16
+		if err = binary.Read(tr, binary.BigEndian, &numExceptions); err != nil {
+			return nil, nil, err
+		}
+
+		if numExceptions > 0 {
+			return nil, nil, errors.New("TODO handle exceptions")
+		}
+
+		// No compression, data starts on the next 4 byte boundary
+		if !group.compressed() {
+			if _, err = io.CopyN(io.Discard, rc, (group.offset()+int64(wc.Count()))%4); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 
-	return
+	if group.PackedSize != 0 {
+		rc, err = packed.NewReadCloser(rc, offset)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return rc, nil, nil
+}
+
+type rawReader struct {
+	i, g   int
+	r      *reader
+	gr     io.ReadCloser
+	offset int64
+}
+
+func (rr *rawReader) lastGroup() bool {
+	return rr.g == int(rr.r.raw[rr.i].GroupIndex+rr.r.raw[rr.i].NumGroup)
+}
+
+func (rr *rawReader) Read(p []byte) (n int, err error) {
+	if rr.gr == nil {
+		if rr.gr, _, err = rr.r.groupReader(rr.g, rr.offset, false); err != nil {
+			return
+		}
+	}
+
+	n, err = rr.gr.Read(p)
+	rr.offset += int64(n)
+
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			return
+		}
+
+		if err = rr.gr.Close(); err != nil {
+			return
+		}
+
+		rr.g++
+
+		// Last group in the raw area?
+		if rr.lastGroup() {
+			return n, io.EOF
+		}
+
+		if rr.gr, _, err = rr.r.groupReader(rr.g, rr.offset, false); err != nil {
+			return
+		}
+	}
+
+	return n, nil
+}
+
+func (r *reader) nextReader() (err error) {
+	for i, x := range r.raw {
+		if r.offset == int64(x.RawDataOff) {
+			r.r, r.nextOffset = &rawReader{
+				i:      i,
+				g:      int(r.raw[i].GroupIndex),
+				r:      r,
+				offset: int64(x.RawDataOff),
+			}, int64(x.RawDataOff+x.RawDataSize)
+
+			return
+		}
+	}
+
+	return errors.New("rvz: cannot find reader")
 }
 
 func (r *reader) Read(p []byte) (n int, err error) {
-	n, err = r.gr.Read(p)
+	if r.r == nil {
+		if err = r.nextReader(); err != nil {
+			return
+		}
+	}
+
+	n, err = r.r.Read(p)
 	r.offset += int64(n)
 
 	if err != nil {
@@ -168,18 +270,14 @@ func (r *reader) Read(p []byte) (n int, err error) {
 			return
 		}
 
-		if err = r.gr.Close(); err != nil {
-			return
+		if r.offset != r.nextOffset {
+			return n, io.ErrUnexpectedEOF
 		}
 
-		r.i++
+		r.r, err = nil, nil
 
-		if r.i == len(r.group) {
+		if r.offset == int64(r.header.IsoFileSize) {
 			return n, io.EOF
-		}
-
-		if r.gr, err = r.groupReader(r.i); err != nil {
-			return
 		}
 	}
 
@@ -305,10 +403,6 @@ func NewReader(ra io.ReaderAt) (io.Reader, error) {
 	}
 
 	if err = r.readGroup(); err != nil {
-		return nil, err
-	}
-
-	if r.gr, err = r.groupReader(r.i); err != nil {
 		return nil, err
 	}
 
