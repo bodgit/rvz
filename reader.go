@@ -2,6 +2,7 @@ package rvz
 
 import (
 	"bytes"
+	"crypto/aes"
 	"crypto/sha1" //nolint:gosec
 	"encoding/binary"
 	"errors"
@@ -60,12 +61,28 @@ type disc struct {
 	ComprData    [7]byte
 }
 
+func (d *disc) partReader(ra io.ReaderAt) io.Reader {
+	return io.NewSectionReader(ra, int64(d.PartOff), int64(d.NumPart*d.PartSize))
+}
+
 func (d *disc) rawReader(ra io.ReaderAt) io.Reader {
 	return io.NewSectionReader(ra, int64(d.RawDataOff), int64(d.RawDataSize))
 }
 
 func (d *disc) groupReader(ra io.ReaderAt) io.Reader {
 	return io.NewSectionReader(ra, int64(d.GroupOff), int64(d.GroupSize))
+}
+
+type partData struct {
+	FirstSector uint32
+	NumSector   uint32
+	GroupIndex  uint32
+	NumGroup    uint32
+}
+
+type part struct {
+	Key  [aes.BlockSize]byte
+	Data [2]partData
 }
 
 type raw struct {
@@ -98,6 +115,7 @@ type reader struct {
 
 	header header
 	disc   disc
+	part   []part
 	raw    []raw
 	group  []group
 
@@ -242,7 +260,14 @@ func NewReader(ra io.ReaderAt) (io.Reader, error) {
 	h.Reset()
 
 	if r.disc.NumPart > 0 {
-		return nil, errors.New("rvz: TODO partitions")
+		r.part = make([]part, r.disc.NumPart)
+		if int(r.disc.PartSize) != binary.Size(r.part[0]) {
+			return nil, errors.New("rvz: part struct has wrong size")
+		}
+
+		if err := binary.Read(io.TeeReader(r.disc.partReader(ra), h), binary.BigEndian, &r.part); err != nil {
+			return nil, err
+		}
 	}
 
 	if !bytes.Equal(r.disc.PartHash[:], h.Sum(nil)) {
