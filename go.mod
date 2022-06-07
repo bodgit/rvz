@@ -7,7 +7,7 @@ require (
 	github.com/bodgit/rom v0.0.0-20220525084135-9efc26c9fe33
 	github.com/connesc/cipherio v0.2.1
 	github.com/klauspost/compress v1.15.6
-	github.com/stretchr/testify v1.7.1
+	github.com/stretchr/testify v1.7.2
 	github.com/ulikunitz/xz v0.5.10
 )
 
@@ -26,5 +26,5 @@ require (
 	go4.org v0.0.0-20201209231011-d4a079459e60 // indirect
 	golang.org/x/net v0.0.0-20210505024714-0287a6fb4125 // indirect
 	golang.org/x/text v0.3.7 // indirect
-	gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
