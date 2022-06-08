@@ -95,3 +95,30 @@ func TestReader(t *testing.T) {
 		})
 	}
 }
+
+func benchmarkReader(file string) error {
+	f, err := os.Open(filepath.Join("testdata", file))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	r, err := rvz.NewReader(f)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func BenchmarkReader(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		if err := benchmarkReader("Metal Slug Anthology (USA).rvz"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
