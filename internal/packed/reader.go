@@ -35,7 +35,7 @@ func (rc *readCloser) nextReader() (err error) {
 	rc.size = int64(size & sizeMask)
 
 	if size&padded == padded {
-		nrc, err := padding.NewReader(rc.rc, rc.offset)
+		nrc, err := padding.NewReadCloser(rc.rc, rc.offset)
 		if err != nil {
 			return err
 		}

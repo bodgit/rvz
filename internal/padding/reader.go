@@ -17,59 +17,59 @@ const (
 //nolint:gochecknoglobals
 var prngPool, bufPool sync.Pool
 
-type paddingReader struct {
+type readCloser struct {
 	prng []uint32
 	buf  *bytes.Buffer
 }
 
-func (pr *paddingReader) advance() {
-	for i := range pr.prng {
-		pr.prng[i] ^= pr.prng[(i+len(pr.prng)-32)%len(pr.prng)]
+func (rc *readCloser) advance() {
+	for i := range rc.prng {
+		rc.prng[i] ^= rc.prng[(i+len(rc.prng)-32)%len(rc.prng)]
 	}
 }
 
-func (pr *paddingReader) Read(p []byte) (int, error) {
-	if pr.buf.Len() == 0 {
-		for _, x := range pr.prng {
-			_ = pr.buf.WriteByte(byte(0xff & (x >> 24)))
-			_ = pr.buf.WriteByte(byte(0xff & (x >> 18))) // not 16!
-			_ = pr.buf.WriteByte(byte(0xff & (x >> 8)))
-			_ = pr.buf.WriteByte(byte(0xff & (x)))
+func (rc *readCloser) Read(p []byte) (int, error) {
+	if rc.buf.Len() == 0 {
+		for _, x := range rc.prng {
+			_ = rc.buf.WriteByte(byte(0xff & (x >> 24)))
+			_ = rc.buf.WriteByte(byte(0xff & (x >> 18))) // not 16!
+			_ = rc.buf.WriteByte(byte(0xff & (x >> 8)))
+			_ = rc.buf.WriteByte(byte(0xff & (x)))
 		}
 
-		pr.advance()
+		rc.advance()
 	}
 
-	return pr.buf.Read(p)
+	return rc.buf.Read(p)
 }
 
-func (pr *paddingReader) Close() error {
-	prngPool.Put(&pr.prng)
-	bufPool.Put(pr.buf)
+func (rc *readCloser) Close() error {
+	prngPool.Put(&rc.prng)
+	bufPool.Put(rc.buf)
 
 	return nil
 }
 
-// NewReader returns an io.Reader that generates a stream of GameCube and Wii
-// padding data. The PRNG is seeded from the io.Reader r. The offset of where
-// this padded stream starts relative to the beginning of the uncompressed
-// disc image is also required.
-func NewReader(r io.Reader, offset int64) (io.ReadCloser, error) {
-	pr := new(paddingReader)
+// NewReadCloser returns an io.ReadCloser that generates a stream of GameCube
+// and Wii padding data. The PRNG is seeded from the io.Reader r. The offset of
+// where this padded stream starts relative to the beginning of the
+// uncompressed disc image or the partition is also required.
+func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
+	rc := new(readCloser)
 
 	p, ok := prngPool.Get().(*[]uint32)
 	if ok {
-		pr.prng = *p
-		pr.prng = pr.prng[:initialSize]
+		rc.prng = *p
+		rc.prng = rc.prng[:initialSize]
 	} else {
-		pr.prng = make([]uint32, initialSize, maximumSize)
+		rc.prng = make([]uint32, initialSize, maximumSize)
 	}
 
-	if err := binary.Read(r, binary.BigEndian, pr.prng); err != nil {
+	if err := binary.Read(r, binary.BigEndian, rc.prng); err != nil {
 		return nil, err
 	}
 
-	pr.prng = pr.prng[:maximumSize]
+	rc.prng = rc.prng[:maximumSize]
 
 	b, ok := bufPool.Get().(*bytes.Buffer)
 	if ok {
@@ -79,19 +79,19 @@ func NewReader(r io.Reader, offset int64) (io.ReadCloser, error) {
 		b.Grow(maximumSize << 2)
 	}
 
-	pr.buf = b
+	rc.buf = b
 
 	for i := initialSize; i < maximumSize; i++ {
-		pr.prng[i] = pr.prng[i-17]<<23 ^ pr.prng[i-16]>>9 ^ pr.prng[i-1]
+		rc.prng[i] = rc.prng[i-17]<<23 ^ rc.prng[i-16]>>9 ^ rc.prng[i-1]
 	}
 
 	for i := 0; i < 4; i++ {
-		pr.advance()
+		rc.advance()
 	}
 
-	if _, err := io.CopyN(io.Discard, pr, offset%util.SectorSize); err != nil {
+	if _, err := io.CopyN(io.Discard, rc, offset%util.SectorSize); err != nil {
 		return nil, err
 	}
 
-	return pr, nil
+	return rc, nil
 }
