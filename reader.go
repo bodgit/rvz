@@ -8,12 +8,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"sync"
 
 	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/packed"
 	"github.com/bodgit/rvz/internal/util"
 	"github.com/bodgit/rvz/internal/zero"
-	"github.com/connesc/cipherio"
 )
 
 const (
@@ -265,7 +265,8 @@ type partReader struct {
 
 	cluster [clusters]*bytes.Buffer
 
-	buf *bytes.Buffer
+	buf []byte
+	br  *bytes.Reader
 
 	p, d, g int
 	r       *reader
@@ -288,6 +289,11 @@ func (pr *partReader) read() (err error) {
 	}
 
 	h := sha1.New() //nolint:gosec
+
+	for i := 0; i < clusters; i++ {
+		pr.h0[i].Reset()
+		pr.cluster[i].Reset()
+	}
 
 	i, j := 0, 0
 
@@ -375,8 +381,7 @@ func (pr *partReader) read() (err error) {
 
 	_, _ = io.CopyN(pr.h2, zero.NewReader(), h2Padding)
 
-	hashIV := make([]byte, aes.BlockSize) // 16 x 0x00
-	clusterIV := make([]byte, aes.BlockSize)
+	iv := make([]byte, aes.BlockSize) // 16 x 0x00
 
 	var block cipher.Block
 
@@ -384,34 +389,35 @@ func (pr *partReader) read() (err error) {
 		return
 	}
 
-	buf := new(bytes.Buffer)
-	buf.Grow(hashSize)
+	pr.buf = pr.buf[:(i * util.SectorSize)]
+
+	var wg sync.WaitGroup
 
 	for k := 0; k < i; k++ {
-		buf.Reset()
+		wg.Add(1)
 
-		wc := cipherio.NewBlockWriter(io.MultiWriter(pr.buf, buf), cipher.NewCBCEncrypter(block, hashIV))
-		_, _ = io.Copy(wc, pr.h0[k])
+		k := k
 
-		if err = wc.Close(); err != nil {
-			return
-		}
+		go func() {
+			defer wg.Done()
 
-		copy(clusterIV, buf.Bytes()[ivOffset:])
+			offset := k * util.SectorSize
 
-		wc = cipherio.NewBlockWriter(pr.buf, cipher.NewCBCEncrypter(block, clusterIV))
-		_, _ = io.Copy(wc, pr.cluster[k])
+			e := cipher.NewCBCEncrypter(block, iv)
+			e.CryptBlocks(pr.buf[offset:], pr.h0[k].Bytes())
 
-		if err = wc.Close(); err != nil {
-			return
-		}
+			e = cipher.NewCBCEncrypter(block, pr.buf[offset+ivOffset:offset+ivOffset+aes.BlockSize])
+			e.CryptBlocks(pr.buf[offset+hashSize:], pr.cluster[k].Bytes())
+		}()
 	}
+
+	wg.Wait()
 
 	return nil
 }
 
 func (pr *partReader) Read(p []byte) (n int, err error) {
-	if pr.buf.Len() == 0 {
+	if pr.br.Len() == 0 {
 		if pr.lastGroup() {
 			return 0, io.EOF
 		}
@@ -419,23 +425,25 @@ func (pr *partReader) Read(p []byte) (n int, err error) {
 		if err = pr.read(); err != nil {
 			return
 		}
+
+		pr.br.Reset(pr.buf)
 	}
 
-	n, err = pr.buf.Read(p)
+	n, err = pr.br.Read(p)
 
 	return
 }
 
 func (r *reader) partReader(p, d int) io.Reader {
 	pr := &partReader{
-		p:   p,
-		d:   d,
-		g:   int(r.part[p].Data[d].GroupIndex),
-		r:   r,
-		buf: new(bytes.Buffer),
+		p: p,
+		d: d,
+		g: int(r.part[p].Data[d].GroupIndex),
+		r: r,
 	}
 
-	pr.buf.Grow(util.SectorSize * clusters) // 2 MiB
+	pr.buf = make([]byte, 0, util.SectorSize*clusters) // 2 MiB
+	pr.br = bytes.NewReader(pr.buf)
 
 	h1 := make([][]io.Writer, subGroup)
 	for i := range h1 {

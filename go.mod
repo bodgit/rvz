@@ -5,7 +5,6 @@ go 1.17
 require (
 	github.com/bodgit/plumbing v1.2.0
 	github.com/bodgit/rom v0.0.0-20220525084135-9efc26c9fe33
-	github.com/connesc/cipherio v0.2.1
 	github.com/klauspost/compress v1.15.6
 	github.com/stretchr/testify v1.7.2
 	github.com/ulikunitz/xz v0.5.10
@@ -15,6 +14,7 @@ require (
 	github.com/andybalholm/brotli v1.0.4 // indirect
 	github.com/bodgit/sevenzip v1.2.2 // indirect
 	github.com/bodgit/windows v1.0.0 // indirect
+	github.com/connesc/cipherio v0.2.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
