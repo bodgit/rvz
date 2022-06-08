@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"sync"
 
+	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/padding"
 )
 
@@ -14,9 +16,11 @@ const (
 	sizeMask        = padded - 1
 )
 
+var pool sync.Pool //nolint:gochecknoglobals
+
 type readCloser struct {
 	rc     io.ReadCloser
-	src    io.Reader
+	src    io.ReadCloser
 	size   int64
 	buf    *bytes.Buffer
 	offset int64
@@ -30,18 +34,17 @@ func (rc *readCloser) nextReader() (err error) {
 
 	rc.size = int64(size & sizeMask)
 
-	var nr io.Reader
-
 	if size&padded == padded {
-		nr, err = padding.NewReader(rc.rc, rc.offset)
+		nrc, err := padding.NewReader(rc.rc, rc.offset)
 		if err != nil {
 			return err
 		}
-	} else {
-		nr = rc.rc
-	}
 
-	rc.src = io.LimitReader(nr, rc.size)
+		rc.src = plumbing.LimitReadCloser(nrc, rc.size)
+	} else {
+		// Intentionally "hide" the underlying Close method
+		rc.src = io.NopCloser(io.LimitReader(rc.rc, rc.size))
+	}
 
 	return nil
 }
@@ -76,6 +79,14 @@ func (rc *readCloser) read() (err error) {
 		rc.size -= n
 		rc.offset += n
 
+		if rc.size == 0 {
+			if err = rc.src.Close(); err != nil {
+				return
+			}
+
+			rc.src = nil
+		}
+
 		if rc.buf.Len() == rc.buf.Cap() {
 			break
 		}
@@ -92,7 +103,15 @@ func (rc *readCloser) Read(p []byte) (int, error) {
 	return rc.buf.Read(p)
 }
 
-func (rc *readCloser) Close() error {
+func (rc *readCloser) Close() (err error) {
+	pool.Put(rc.buf)
+
+	if rc.src != nil {
+		if err = rc.src.Close(); err != nil {
+			return
+		}
+	}
+
 	return rc.rc.Close()
 }
 
@@ -103,10 +122,18 @@ func (rc *readCloser) Close() error {
 func NewReadCloser(rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
 	nrc := &readCloser{
 		rc:     rc,
-		buf:    new(bytes.Buffer),
 		offset: offset,
 	}
-	nrc.buf.Grow(1 << 16)
+
+	b, ok := pool.Get().(*bytes.Buffer)
+	if ok {
+		b.Reset()
+	} else {
+		b = new(bytes.Buffer)
+		b.Grow(1 << 16)
+	}
+
+	nrc.buf = b
 
 	return nrc, nil
 }

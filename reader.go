@@ -302,7 +302,7 @@ func (pr *partReader) read() (err error) {
 
 		var n int64
 		//nolint:nestif
-		if n, err = io.CopyN(io.MultiWriter(pr.cluster[i], h), pr.gr, blockSize); err != nil {
+		if n, err = io.CopyN(pr.cluster[i], io.TeeReader(pr.gr, h), blockSize); err != nil {
 			if errors.Is(err, io.EOF) && j == 0 && n == 0 {
 				if err = pr.gr.Close(); err != nil {
 					return
@@ -351,7 +351,7 @@ func (pr *partReader) read() (err error) {
 		for j := 0; j < blocksPerCluster; j++ {
 			h.Reset()
 
-			if _, err = io.CopyN(io.MultiWriter(pr.cluster[k], h), zero.NewReader(), blockSize); err != nil {
+			if _, err = io.CopyN(pr.cluster[k], io.TeeReader(zero.NewReader(), h), blockSize); err != nil {
 				return
 			}
 
@@ -361,11 +361,13 @@ func (pr *partReader) read() (err error) {
 		_, _ = io.CopyN(pr.h0[k], zero.NewReader(), h0Padding)
 	}
 
+	buf := make([]byte, hashSize)
+
 	// Calculate the H1 hashes
 	for i := 0; i < subGroup; i++ {
 		for j := 0; j < subGroup; j++ {
 			h.Reset()
-			_, _ = io.Copy(h, io.LimitReader(bytes.NewReader(pr.h0[i*subGroup+j].Bytes()), h0Size))
+			_, _ = io.CopyBuffer(h, io.LimitReader(bytes.NewReader(pr.h0[i*subGroup+j].Bytes()), h0Size), buf)
 			_, _ = pr.h1[i].Write(h.Sum(nil))
 		}
 
@@ -375,7 +377,9 @@ func (pr *partReader) read() (err error) {
 	// Calculate the H2 hashes
 	for i := 0; i < subGroup; i++ {
 		h.Reset()
-		_, _ = io.Copy(h, io.NewSectionReader(bytes.NewReader(pr.h0[i*subGroup].Bytes()), h0Size+h0Padding, h1Size))
+		_, _ = io.CopyBuffer(h,
+			io.NewSectionReader(bytes.NewReader(pr.h0[i*subGroup].Bytes()), h0Size+h0Padding, h1Size),
+			buf)
 		_, _ = pr.h2.Write(h.Sum(nil))
 	}
 

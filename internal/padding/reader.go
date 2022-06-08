@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"sync"
 
 	"github.com/bodgit/rvz/internal/util"
 )
@@ -12,6 +13,9 @@ const (
 	initialSize = 17
 	maximumSize = 521
 )
+
+//nolint:gochecknoglobals
+var prngPool, bufPool sync.Pool
 
 type paddingReader struct {
 	prng []uint32
@@ -39,22 +43,43 @@ func (pr *paddingReader) Read(p []byte) (int, error) {
 	return pr.buf.Read(p)
 }
 
+func (pr *paddingReader) Close() error {
+	prngPool.Put(&pr.prng)
+	bufPool.Put(pr.buf)
+
+	return nil
+}
+
 // NewReader returns an io.Reader that generates a stream of GameCube and Wii
 // padding data. The PRNG is seeded from the io.Reader r. The offset of where
 // this padded stream starts relative to the beginning of the uncompressed
 // disc image is also required.
-func NewReader(r io.Reader, offset int64) (io.Reader, error) {
+func NewReader(r io.Reader, offset int64) (io.ReadCloser, error) {
 	pr := new(paddingReader)
 
-	pr.prng = make([]uint32, initialSize, maximumSize)
+	p, ok := prngPool.Get().(*[]uint32)
+	if ok {
+		pr.prng = *p
+		pr.prng = pr.prng[:initialSize]
+	} else {
+		pr.prng = make([]uint32, initialSize, maximumSize)
+	}
+
 	if err := binary.Read(r, binary.BigEndian, pr.prng); err != nil {
 		return nil, err
 	}
 
-	pr.prng = pr.prng[:cap(pr.prng)]
+	pr.prng = pr.prng[:maximumSize]
 
-	pr.buf = new(bytes.Buffer)
-	pr.buf.Grow(maximumSize << 2)
+	b, ok := bufPool.Get().(*bytes.Buffer)
+	if ok {
+		b.Reset()
+	} else {
+		b = new(bytes.Buffer)
+		b.Grow(maximumSize << 2)
+	}
+
+	pr.buf = b
 
 	for i := initialSize; i < maximumSize; i++ {
 		pr.prng[i] = pr.prng[i-17]<<23 ^ pr.prng[i-16]>>9 ^ pr.prng[i-1]
