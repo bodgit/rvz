@@ -75,6 +75,14 @@ func (d *disc) groupReader(ra io.ReaderAt) io.Reader {
 	return io.NewSectionReader(ra, int64(d.GroupOff), int64(d.GroupSize))
 }
 
+func (d *disc) chunkSize(partition bool) int64 {
+	if partition {
+		return int64(d.ChunkSize) / util.SectorSize * (util.SectorSize - hashSize)
+	}
+
+	return int64(d.ChunkSize)
+}
+
 type partData struct {
 	FirstSector uint32
 	NumSector   uint32
@@ -126,9 +134,8 @@ type reader struct {
 	raw    []raw
 	group  []group
 
-	r          io.Reader
-	offset     int64
-	nextOffset int64
+	r      io.Reader
+	offset int64
 }
 
 func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
@@ -151,12 +158,7 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 			return nil, nil, err
 		}
 	case group.size() == 0:
-		limit := int64(r.disc.ChunkSize)
-		if partition {
-			limit = limit / util.SectorSize * (util.SectorSize - hashSize)
-		}
-
-		rc = io.NopCloser(io.LimitReader(zero.NewReader(), limit))
+		rc = io.NopCloser(io.LimitReader(zero.NewReader(), r.disc.chunkSize(partition)))
 	default:
 		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
 	}
@@ -197,7 +199,6 @@ func (r *reader) nextReader() (err error) {
 	for i, x := range r.raw {
 		if r.offset == int64(x.RawDataOff) {
 			r.r = newRawReader(r, i)
-			r.nextOffset = int64(x.RawDataOff + x.RawDataSize)
 
 			return
 		}
@@ -207,7 +208,6 @@ func (r *reader) nextReader() (err error) {
 		for j := range x.Data {
 			if r.offset == int64(x.Data[j].FirstSector*util.SectorSize) && x.Data[j].NumSector > 0 {
 				r.r = newPartReader(r, i, j)
-				r.nextOffset = int64(x.Data[j].FirstSector+x.Data[j].NumSector) * util.SectorSize
 
 				return
 			}
@@ -218,6 +218,10 @@ func (r *reader) nextReader() (err error) {
 }
 
 func (r *reader) Read(p []byte) (n int, err error) {
+	if r.offset == int64(r.header.IsoFileSize) {
+		return 0, io.EOF
+	}
+
 	if r.r == nil {
 		if err = r.nextReader(); err != nil {
 			return
@@ -232,15 +236,7 @@ func (r *reader) Read(p []byte) (n int, err error) {
 			return
 		}
 
-		if r.offset != r.nextOffset {
-			return n, io.ErrUnexpectedEOF
-		}
-
 		r.r, err = nil, nil
-
-		if r.offset == int64(r.header.IsoFileSize) {
-			return n, io.EOF
-		}
 	}
 
 	return

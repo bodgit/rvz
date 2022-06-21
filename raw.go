@@ -12,11 +12,11 @@ type rawReader struct {
 	offset int64
 }
 
-func (rr *rawReader) lastGroup() bool {
-	return rr.g == int(rr.r.raw[rr.i].GroupIndex+rr.r.raw[rr.i].NumGroup)
-}
-
 func (rr *rawReader) Read(p []byte) (n int, err error) {
+	if rr.offset == int64(rr.r.raw[rr.i].RawDataOff+rr.r.raw[rr.i].RawDataSize) {
+		return n, io.EOF
+	}
+
 	if rr.gr == nil {
 		if rr.gr, _, err = rr.r.groupReader(rr.g, rr.offset, false); err != nil {
 			return
@@ -37,17 +37,10 @@ func (rr *rawReader) Read(p []byte) (n int, err error) {
 
 		rr.g++
 
-		// Last group in the raw area?
-		if rr.lastGroup() {
-			return n, io.EOF
-		}
-
-		if rr.gr, _, err = rr.r.groupReader(rr.g, rr.offset, false); err != nil {
-			return
-		}
+		rr.gr, err = nil, nil
 	}
 
-	return n, nil
+	return
 }
 
 func newRawReader(r *reader, i int) io.Reader {
