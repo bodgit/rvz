@@ -83,6 +83,10 @@ func (d *disc) chunkSize(partition bool) int64 {
 	return int64(d.ChunkSize)
 }
 
+func (d *disc) sectorsPerChunk() int {
+	return int(d.ChunkSize) / util.SectorSize
+}
+
 type partData struct {
 	FirstSector uint32
 	NumSector   uint32

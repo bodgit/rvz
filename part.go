@@ -5,12 +5,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha1" //nolint:gosec
-	"errors"
 	"io"
-	"sync"
+	"runtime"
 
 	"github.com/bodgit/rvz/internal/util"
 	"github.com/bodgit/rvz/internal/zero"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -29,7 +29,17 @@ const (
 	blockSize = (util.SectorSize - hashSize) / blocksPerCluster
 
 	ivOffset = 0x03d0
+
+	groupSize = util.SectorSize * clusters // 2 MiB
 )
+
+func min(x, y int) int {
+	if x < y {
+		return x
+	}
+
+	return y
+}
 
 type partReader struct {
 	h0 [clusters]*bytes.Buffer
@@ -41,98 +51,73 @@ type partReader struct {
 	buf []byte
 	br  *bytes.Reader
 
-	p, d, g int
-	r       *reader
-	gr      io.ReadCloser
-	offset  int64
+	p, d   int
+	r      *reader
+	sector int
 }
 
-func (pr *partReader) lastGroup() bool {
-	p := pr.r.part[pr.p].Data[pr.d]
-
-	return pr.g == int(p.GroupIndex+p.NumGroup)
+func (pr *partReader) groupOffset(g int) int64 {
+	return (int64(g) - int64(pr.r.part[pr.p].Data[pr.d].GroupIndex)) * pr.r.disc.chunkSize(true)
 }
 
-//nolint:cyclop,funlen,gocognit
-func (pr *partReader) read() (err error) {
-	if pr.gr == nil {
-		if pr.gr, _, err = pr.r.groupReader(pr.g, pr.offset, true); err != nil {
-			return
-		}
-	}
-
-	h := sha1.New() //nolint:gosec
-
+func (pr *partReader) reset() {
 	for i := 0; i < clusters; i++ {
 		pr.h0[i].Reset()
 		pr.cluster[i].Reset()
 	}
+}
 
-	i, j := 0, 0
+func (pr *partReader) readGroup(i int) error {
+	ss := i * pr.r.disc.sectorsPerChunk()
+	g := pr.sectorToGroup(pr.sector + ss)
 
-	for {
-		h.Reset()
+	h := sha1.New() //nolint:gosec
 
-		var n int64
-		//nolint:nestif
-		if n, err = io.CopyN(pr.cluster[i], io.TeeReader(pr.gr, h), blockSize); err != nil {
-			if errors.Is(err, io.EOF) && j == 0 && n == 0 {
-				if err = pr.gr.Close(); err != nil {
-					return
-				}
-
-				pr.g++
-
-				if !pr.lastGroup() {
-					if pr.gr, _, err = pr.r.groupReader(pr.g, pr.offset, true); err != nil {
-						return
-					}
-
-					continue
-				}
-			} else {
-				return
-			}
-		} else {
-			pr.offset += n
-			_, _ = pr.h0[i].Write(h.Sum(nil))
-		}
-
-		if pr.lastGroup() {
-			if err = pr.gr.Close(); err != nil {
-				return
-			}
-
-			break
-		}
-
-		j++
-
-		if j == blocksPerCluster {
-			j = 0
-			_, _ = io.CopyN(pr.h0[i], zero.NewReader(), h0Padding)
-			i++
-
-			if i == clusters {
-				break
-			}
-		}
+	split := min(ss+pr.r.disc.sectorsPerChunk(), int(pr.r.part[pr.p].Data[pr.d].NumSector)-pr.sector)
+	if split < ss {
+		split = ss
 	}
 
-	// Zero-fill any remaining clusters, calculating the H0 hashes as we go
-	for k := i; k < clusters; k++ {
-		for j := 0; j < blocksPerCluster; j++ {
+	var (
+		rc  io.ReadCloser
+		err error
+		zr  = zero.NewReader()
+		r   io.Reader
+	)
+
+	if split > ss {
+		rc, _, err = pr.r.groupReader(g, pr.groupOffset(g), true)
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+	}
+
+	for j := ss; j < ss+pr.r.disc.sectorsPerChunk(); j++ {
+		if j < split {
+			r = rc
+		} else {
+			r = zr
+		}
+
+		for k := 0; k < blocksPerCluster; k++ {
 			h.Reset()
 
-			if _, err = io.CopyN(pr.cluster[k], io.TeeReader(zero.NewReader(), h), blockSize); err != nil {
-				return
+			if _, err := io.CopyN(pr.cluster[j], io.TeeReader(r, h), blockSize); err != nil {
+				return err
 			}
 
-			_, _ = pr.h0[k].Write(h.Sum(nil))
+			_, _ = pr.h0[j].Write(h.Sum(nil))
 		}
 
-		_, _ = io.CopyN(pr.h0[k], zero.NewReader(), h0Padding)
+		_, _ = io.CopyN(pr.h0[j], zero.NewReader(), h0Padding)
 	}
+
+	return nil
+}
+
+func (pr *partReader) writeHashes() {
+	h := sha1.New() //nolint:gosec
 
 	buf := make([]byte, hashSize)
 
@@ -157,45 +142,74 @@ func (pr *partReader) read() (err error) {
 	}
 
 	_, _ = io.CopyN(pr.h2, zero.NewReader(), h2Padding)
+}
 
-	iv := make([]byte, aes.BlockSize) // 16 x 0x00
+//nolint:gochecknoglobals
+var iv = make([]byte, aes.BlockSize) // 16 x 0x00
 
-	var block cipher.Block
+func (pr *partReader) encryptSector(sector int) error {
+	block, err := aes.NewCipher(pr.r.part[pr.p].Key[:])
+	if err != nil {
+		return err
+	}
 
-	if block, err = aes.NewCipher(pr.r.part[pr.p].Key[:]); err != nil {
+	offset := sector * util.SectorSize
+
+	e := cipher.NewCBCEncrypter(block, iv)
+	e.CryptBlocks(pr.buf[offset:], pr.h0[sector].Bytes())
+
+	e = cipher.NewCBCEncrypter(block, pr.buf[offset+ivOffset:offset+ivOffset+aes.BlockSize])
+	e.CryptBlocks(pr.buf[offset+hashSize:], pr.cluster[sector].Bytes())
+
+	return nil
+}
+
+func (pr *partReader) sectorToGroup(sector int) int {
+	return int(pr.r.part[pr.p].Data[pr.d].GroupIndex) + sector/(int(pr.r.disc.ChunkSize)/util.SectorSize)
+}
+
+func (pr *partReader) read() (err error) {
+	eg := new(errgroup.Group)
+	eg.SetLimit(runtime.NumCPU())
+
+	pr.reset()
+
+	for i := 0; i < groupSize/int(pr.r.disc.ChunkSize); i++ {
+		i := i
+
+		eg.Go(func() error {
+			return pr.readGroup(i)
+		})
+	}
+
+	if err = eg.Wait(); err != nil {
 		return
 	}
 
-	pr.buf = pr.buf[:(i * util.SectorSize)]
+	pr.writeHashes()
 
-	var wg sync.WaitGroup
+	sectors := min(clusters, int(pr.r.part[pr.p].Data[pr.d].NumSector)-pr.sector)
 
-	for k := 0; k < i; k++ {
-		wg.Add(1)
+	pr.buf = pr.buf[:(sectors * util.SectorSize)]
 
-		k := k
+	for i := 0; i < sectors; i++ {
+		i := i
 
-		go func() {
-			defer wg.Done()
-
-			offset := k * util.SectorSize
-
-			e := cipher.NewCBCEncrypter(block, iv)
-			e.CryptBlocks(pr.buf[offset:], pr.h0[k].Bytes())
-
-			e = cipher.NewCBCEncrypter(block, pr.buf[offset+ivOffset:offset+ivOffset+aes.BlockSize])
-			e.CryptBlocks(pr.buf[offset+hashSize:], pr.cluster[k].Bytes())
-		}()
+		eg.Go(func() error {
+			return pr.encryptSector(i)
+		})
 	}
 
-	wg.Wait()
+	if err = eg.Wait(); err != nil {
+		return
+	}
 
 	return nil
 }
 
 func (pr *partReader) Read(p []byte) (n int, err error) {
 	if pr.br.Len() == 0 {
-		if pr.lastGroup() {
+		if pr.sector == int(pr.r.part[pr.p].Data[pr.d].NumSector) {
 			return 0, io.EOF
 		}
 
@@ -204,6 +218,8 @@ func (pr *partReader) Read(p []byte) (n int, err error) {
 		}
 
 		pr.br.Reset(pr.buf)
+
+		pr.sector += pr.br.Len() / util.SectorSize
 	}
 
 	n, err = pr.br.Read(p)
@@ -215,11 +231,10 @@ func newPartReader(r *reader, p, d int) io.Reader {
 	pr := &partReader{
 		p: p,
 		d: d,
-		g: int(r.part[p].Data[d].GroupIndex),
 		r: r,
 	}
 
-	pr.buf = make([]byte, 0, util.SectorSize*clusters) // 2 MiB
+	pr.buf = make([]byte, 0, groupSize) // 2 MiB
 	pr.br = bytes.NewReader(pr.buf)
 
 	h1 := make([][]io.Writer, subGroup)
