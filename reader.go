@@ -337,12 +337,10 @@ func NewReader(ra io.ReaderAt) (io.Reader, error) {
 	case util.SectorSize << 3: // 256 KiB
 	case util.SectorSize << 4: // 512 KiB
 	case util.SectorSize << 5: //   1 MiB
+	case util.SectorSize << 6: //   2 MiB
 		break
 	default:
-		// Multiple of 2 MiB
-		if r.disc.ChunkSize%(util.SectorSize<<6) != 0 {
-			return nil, errors.New("rvz: bad chunk size")
-		}
+		return nil, errors.New("rvz: bad chunk size")
 	}
 
 	h.Reset()
