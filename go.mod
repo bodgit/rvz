@@ -6,7 +6,7 @@ require (
 	github.com/bodgit/plumbing v1.2.0
 	github.com/bodgit/rom v0.0.0-20220525084135-9efc26c9fe33
 	github.com/klauspost/compress v1.15.7
-	github.com/stretchr/testify v1.7.5
+	github.com/stretchr/testify v1.8.0
 	github.com/ulikunitz/xz v0.5.10
 	golang.org/x/sync v0.0.0-20220601150217-0de741cfad7f
 )
