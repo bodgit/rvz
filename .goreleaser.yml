@@ -1,5 +1,25 @@
 ---
+archives:
+  - format_overrides:
+      - goos: windows
+        format: zip
+before:
+  hooks:
+    - go mod tidy
 builds:
-  - skip: true
+  - binary: rvz
+    main: ./cmd/rvz/main.go
+    env:
+      - CGO_ENABLED=0
+    goarch:
+      - amd64
+      - arm
+      - arm64
+    goos:
+      - darwin
+      - linux
+      - windows
+checksum:
+  name_template: 'checksums.txt'
 release:
   prerelease: auto
