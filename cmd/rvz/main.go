@@ -12,10 +12,11 @@ import (
 
 var (
 	version = "dev"
-	commit  = "none"
-	date    = "unknown"
+	commit  = "none"    //nolint:gochecknoglobals
+	date    = "unknown" //nolint:gochecknoglobals
 )
 
+//nolint:gochecknoinits
 func init() {
 	cli.VersionFlag = &cli.BoolFlag{
 		Name:    "version",
@@ -60,7 +61,7 @@ func main() {
 					if err != nil {
 						return err
 					}
-					defer w.(io.Closer).Close()
+					defer w.(io.Closer).Close() //nolint:forcetypeassert
 				} else {
 					w = os.Stdout
 				}
