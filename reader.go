@@ -27,6 +27,12 @@ const (
 	wii      = 2
 )
 
+// A Reader has Read and Size methods.
+type Reader interface {
+	io.Reader
+	Size() int64
+}
+
 //nolint:maligned
 type header struct {
 	Magic             uint32
@@ -246,6 +252,10 @@ func (r *reader) Read(p []byte) (n int, err error) {
 	return
 }
 
+func (r *reader) Size() int64 {
+	return int64(r.header.IsoFileSize)
+}
+
 func (r *reader) readRaw() error {
 	cr, err := r.decompressor(r.disc.rawReader(r.ra))
 	if err != nil {
@@ -286,7 +296,7 @@ func (r *reader) readGroup() error {
 
 // NewReader returns a new io.Reader that reads and decompresses from ra.
 //nolint:cyclop,funlen
-func NewReader(ra io.ReaderAt) (io.Reader, error) {
+func NewReader(ra io.ReaderAt) (Reader, error) {
 	r := new(reader)
 	r.ra = ra
 
