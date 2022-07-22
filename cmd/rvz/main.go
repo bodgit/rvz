@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/bodgit/rvz"
+	"github.com/schollz/progressbar/v3"
 	"github.com/urfave/cli/v2"
 )
 
@@ -25,6 +26,44 @@ func init() {
 	}
 }
 
+func decompress(c *cli.Context) error {
+	if c.NArg() < 1 {
+		cli.ShowCommandHelpAndExit(c, c.Command.FullName(), 1)
+	}
+
+	f, err := os.Open(c.Args().First())
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	r, err := rvz.NewReader(f)
+	if err != nil {
+		return err
+	}
+
+	var w io.Writer
+
+	if c.NArg() >= 2 {
+		w, err = os.Create(c.Args().Get(1))
+		if err != nil {
+			return err
+		}
+		defer w.(io.Closer).Close() //nolint:forcetypeassert
+	} else {
+		w = os.Stdout
+	}
+
+	if c.Bool("verbose") {
+		pb := progressbar.DefaultBytes(r.Size())
+		w = io.MultiWriter(w, pb)
+	}
+
+	_, err = io.Copy(w, r)
+
+	return err
+}
+
 func main() {
 	app := cli.NewApp()
 
@@ -38,38 +77,14 @@ func main() {
 			Usage:       "Decompress RVZ image",
 			Description: "Decompress RVZ image",
 			ArgsUsage:   "SOURCE [TARGET]",
-			Action: func(c *cli.Context) error {
-				if c.NArg() < 1 {
-					cli.ShowCommandHelpAndExit(c, c.Command.FullName(), 1)
-				}
-
-				f, err := os.Open(c.Args().First())
-				if err != nil {
-					return err
-				}
-				defer f.Close()
-
-				r, err := rvz.NewReader(f)
-				if err != nil {
-					return err
-				}
-
-				var w io.Writer
-
-				if c.NArg() >= 2 {
-					w, err = os.Create(c.Args().Get(1))
-					if err != nil {
-						return err
-					}
-					defer w.(io.Closer).Close() //nolint:forcetypeassert
-				} else {
-					w = os.Stdout
-				}
-
-				_, err = io.Copy(w, r)
-
-				return err
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:    "verbose",
+					Aliases: []string{"v"},
+					Usage:   "increase verbosity",
+				},
 			},
+			Action: decompress,
 		},
 	}
 
