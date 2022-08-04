@@ -46,3 +46,11 @@ func main() {
 	}
 }
 ```
+
+## rvz
+
+The `rvz` utility currently allows you to decompress an `.rvz` file back to its original `.iso` format.
+
+A quick demo:
+
+<img src="./rvz.svg">
