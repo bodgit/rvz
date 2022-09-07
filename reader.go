@@ -295,6 +295,7 @@ func (r *reader) readGroup() error {
 }
 
 // NewReader returns a new io.Reader that reads and decompresses from ra.
+//
 //nolint:cyclop,funlen
 func NewReader(ra io.ReaderAt) (Reader, error) {
 	r := new(reader)
