@@ -19,12 +19,11 @@ const (
 	Extension = ".rvz"
 
 	rvzMagic uint32 = 0x52565a01 // 'R', 'V', 'Z', 0x01
+)
 
-	compressed     uint32 = 1 << 31
-	compressedMask        = compressed - 1
-
-	gameCube = 1
-	wii      = 2
+const (
+	gameCube = iota + 1
+	wii
 )
 
 // A Reader has Read and Size methods.
@@ -121,6 +120,11 @@ type group struct {
 func (g *group) offset() int64 {
 	return int64(g.Offset << 2)
 }
+
+const (
+	compressed     uint32 = 1 << 31
+	compressedMask        = compressed - 1
+)
 
 func (g *group) compressed() bool {
 	return g.Size&compressed == compressed
@@ -371,13 +375,11 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 		return nil, errors.New("rvz: partition hash doesn't match")
 	}
 
-	var err error
-
-	if err = r.readRaw(); err != nil {
+	if err := r.readRaw(); err != nil {
 		return nil, err
 	}
 
-	if err = r.readGroup(); err != nil {
+	if err := r.readGroup(); err != nil {
 		return nil, err
 	}
 
