@@ -6,7 +6,7 @@ require (
 	github.com/bodgit/plumbing v1.2.0
 	github.com/bodgit/rom v0.0.0-20220525084135-9efc26c9fe33
 	github.com/klauspost/compress v1.15.9
-	github.com/schollz/progressbar/v3 v3.10.1
+	github.com/schollz/progressbar/v3 v3.11.0
 	github.com/stretchr/testify v1.8.0
 	github.com/ulikunitz/xz v0.5.10
 	github.com/urfave/cli/v2 v2.14.1
