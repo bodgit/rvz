@@ -23,3 +23,5 @@ checksum:
   name_template: 'checksums.txt'
 release:
   prerelease: auto
+changelog:
+  use: github-native
