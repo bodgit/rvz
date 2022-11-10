@@ -1,6 +1,6 @@
 [![GitHub release](https://img.shields.io/github/v/release/bodgit/rvz)](https://github.com/bodgit/rvz/releases)
 [![Build Status](https://img.shields.io/github/workflow/status/bodgit/rvz/build)](https://github.com/bodgit/rvz/actions?query=workflow%3Abuild)
-[![Coverage Status](https://coveralls.io/repos/github/bodgit/rvz/badge.svg?branch=master)](https://coveralls.io/github/bodgit/rvz?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/bodgit/rvz/badge.svg?branch=main)](https://coveralls.io/github/bodgit/rvz?branch=main)
 [![Go Report Card](https://goreportcard.com/badge/github.com/bodgit/rvz)](https://goreportcard.com/report/github.com/bodgit/rvz)
 [![GoDoc](https://godoc.org/github.com/bodgit/rvz?status.svg)](https://godoc.org/github.com/bodgit/rvz)
 ![Go version](https://img.shields.io/badge/Go-1.19-brightgreen.svg)
