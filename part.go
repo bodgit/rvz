@@ -8,8 +8,8 @@ import (
 	"io"
 	"runtime"
 
+	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/util"
-	"github.com/bodgit/rvz/internal/zero"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -81,7 +81,7 @@ func (pr *partReader) readGroup(i int) error {
 	var (
 		rc  io.ReadCloser
 		err error
-		zr  = zero.NewReader()
+		zr  = plumbing.DevZero()
 		r   io.Reader
 	)
 
@@ -110,7 +110,7 @@ func (pr *partReader) readGroup(i int) error {
 			_, _ = pr.h0[j].Write(h.Sum(nil))
 		}
 
-		_, _ = io.CopyN(pr.h0[j], zero.NewReader(), h0Padding)
+		_, _ = io.CopyN(pr.h0[j], plumbing.DevZero(), h0Padding)
 	}
 
 	return nil
@@ -129,7 +129,7 @@ func (pr *partReader) writeHashes() {
 			_, _ = pr.h1[i].Write(h.Sum(nil))
 		}
 
-		_, _ = io.CopyN(pr.h1[i], zero.NewReader(), h1Padding)
+		_, _ = io.CopyN(pr.h1[i], plumbing.DevZero(), h1Padding)
 	}
 
 	// Calculate the H2 hashes
@@ -141,7 +141,7 @@ func (pr *partReader) writeHashes() {
 		_, _ = pr.h2.Write(h.Sum(nil))
 	}
 
-	_, _ = io.CopyN(pr.h2, zero.NewReader(), h2Padding)
+	_, _ = io.CopyN(pr.h2, plumbing.DevZero(), h2Padding)
 }
 
 //nolint:gochecknoglobals
