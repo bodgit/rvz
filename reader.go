@@ -11,7 +11,6 @@ import (
 	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/packed"
 	"github.com/bodgit/rvz/internal/util"
-	"github.com/bodgit/rvz/internal/zero"
 )
 
 const (
@@ -172,7 +171,7 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 			return nil, nil, err
 		}
 	case group.size() == 0:
-		rc = io.NopCloser(io.LimitReader(zero.NewReader(), r.disc.chunkSize(partition)))
+		rc = io.NopCloser(io.LimitReader(plumbing.DevZero(), r.disc.chunkSize(partition)))
 	default:
 		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
 	}
