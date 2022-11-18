@@ -3,7 +3,7 @@ module github.com/bodgit/rvz
 go 1.18
 
 require (
-	github.com/bodgit/plumbing v1.2.0
+	github.com/bodgit/plumbing v1.3.0
 	github.com/bodgit/rom v0.0.0-20220525084135-9efc26c9fe33
 	github.com/klauspost/compress v1.15.12
 	github.com/schollz/progressbar/v3 v3.12.1
