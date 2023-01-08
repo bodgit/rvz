@@ -1,5 +1,5 @@
 [![GitHub release](https://img.shields.io/github/v/release/bodgit/rvz)](https://github.com/bodgit/rvz/releases)
-[![Build Status](https://img.shields.io/github/workflow/status/bodgit/rvz/build)](https://github.com/bodgit/rvz/actions?query=workflow%3Abuild)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/bodgit/rvz/main.yml?branch=main)](https://github.com/bodgit/rvz/actions?query=workflow%3Abuild)
 [![Coverage Status](https://coveralls.io/repos/github/bodgit/rvz/badge.svg?branch=main)](https://coveralls.io/github/bodgit/rvz?branch=main)
 [![Go Report Card](https://goreportcard.com/badge/github.com/bodgit/rvz)](https://goreportcard.com/report/github.com/bodgit/rvz)
 [![GoDoc](https://godoc.org/github.com/bodgit/rvz?status.svg)](https://godoc.org/github.com/bodgit/rvz)
@@ -53,4 +53,4 @@ The `rvz` utility currently allows you to decompress an `.rvz` file back to its 
 
 A quick demo:
 
-<img src="./rvz.svg">
+<img src="./decompress.gif">
