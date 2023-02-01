@@ -5,11 +5,16 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz"
 	"github.com/schollz/progressbar/v3"
 	"github.com/urfave/cli/v2"
 )
+
+const isoExtension = ".iso"
 
 var (
 	version = "dev"
@@ -31,7 +36,16 @@ func decompress(c *cli.Context) error {
 		cli.ShowCommandHelpAndExit(c, c.Command.FullName(), 1)
 	}
 
-	f, err := os.Open(c.Args().First())
+	src, dst := c.Args().Get(0), c.Args().Get(1)
+	if dst == "" {
+		if ext := filepath.Ext(src); ext == isoExtension {
+			return fmt.Errorf("source file %s already has %s extension", src, isoExtension)
+		}
+
+		dst = strings.TrimSuffix(src, rvz.Extension) + isoExtension
+	}
+
+	f, err := os.Open(src)
 	if err != nil {
 		return err
 	}
@@ -42,22 +56,19 @@ func decompress(c *cli.Context) error {
 		return err
 	}
 
-	var w io.Writer
+	var w io.WriteCloser
 
-	if c.NArg() >= 2 {
-		w, err = os.Create(c.Args().Get(1))
-		if err != nil {
-			return err
-		}
-		defer w.(io.Closer).Close() //nolint:forcetypeassert
-	} else {
-		w = os.Stdout
+	w, err = os.Create(dst)
+	if err != nil {
+		return err
 	}
 
 	if c.Bool("verbose") {
 		pb := progressbar.DefaultBytes(r.Size())
-		w = io.MultiWriter(w, pb)
+		w = plumbing.MultiWriteCloser(w, plumbing.NopWriteCloser(pb))
 	}
+
+	defer w.Close()
 
 	_, err = io.Copy(w, r)
 
