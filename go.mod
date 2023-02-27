@@ -7,7 +7,7 @@ require (
 	github.com/bodgit/rom v0.0.1
 	github.com/klauspost/compress v1.16.0
 	github.com/schollz/progressbar/v3 v3.13.0
-	github.com/stretchr/testify v1.8.1
+	github.com/stretchr/testify v1.8.2
 	github.com/ulikunitz/xz v0.5.11
 	github.com/urfave/cli/v2 v2.24.4
 	golang.org/x/sync v0.1.0
