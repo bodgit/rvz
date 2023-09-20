@@ -49,6 +49,7 @@ func (rc *readCloser) nextReader() (err error) {
 	return nil
 }
 
+//nolint:nakedret
 func (rc *readCloser) read() (err error) {
 	for {
 		if rc.size == 0 {

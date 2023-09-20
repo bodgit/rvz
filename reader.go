@@ -290,11 +290,8 @@ func (r *reader) readGroup() error {
 	defer cr.Close()
 
 	r.group = make([]group, r.disc.NumGroup)
-	if err = binary.Read(cr, binary.BigEndian, &r.group); err != nil {
-		return err
-	}
 
-	return nil
+	return binary.Read(cr, binary.BigEndian, &r.group)
 }
 
 // NewReader returns a new io.Reader that reads and decompresses from ra.
