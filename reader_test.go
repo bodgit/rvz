@@ -21,7 +21,7 @@ const (
 	wii      = "Nintendo - Wii - Datfile (3647) (2022-01-07 22-05-54).dat"
 )
 
-//nolint:cyclop,funlen,gocognit
+//nolint:cyclop,funlen
 func TestReader(t *testing.T) {
 	t.Parallel()
 

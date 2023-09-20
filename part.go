@@ -168,6 +168,7 @@ func (pr *partReader) sectorToGroup(sector int) int {
 	return int(pr.r.part[pr.p].Data[pr.d].GroupIndex) + sector/(int(pr.r.disc.ChunkSize)/util.SectorSize)
 }
 
+//nolint:nakedret
 func (pr *partReader) read() (err error) {
 	eg := new(errgroup.Group)
 	eg.SetLimit(runtime.NumCPU())
