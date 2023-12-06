@@ -9,7 +9,7 @@ require (
 	github.com/schollz/progressbar/v3 v3.14.1
 	github.com/stretchr/testify v1.8.4
 	github.com/ulikunitz/xz v0.5.11
-	github.com/urfave/cli/v2 v2.25.7
+	github.com/urfave/cli/v2 v2.26.0
 	golang.org/x/sync v0.5.0
 )
 
