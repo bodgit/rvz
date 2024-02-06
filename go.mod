@@ -5,7 +5,7 @@ go 1.19
 require (
 	github.com/bodgit/plumbing v1.3.0
 	github.com/bodgit/rom v0.0.1
-	github.com/klauspost/compress v1.17.5
+	github.com/klauspost/compress v1.17.6
 	github.com/schollz/progressbar/v3 v3.14.1
 	github.com/stretchr/testify v1.8.4
 	github.com/ulikunitz/xz v0.5.11
