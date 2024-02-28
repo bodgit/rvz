@@ -34,6 +34,7 @@ func NewReader(_ []byte, reader io.Reader) (io.ReadCloser, error) {
 		if r, err = zstd.NewReader(reader); err != nil {
 			return nil, err
 		}
+
 		runtime.SetFinalizer(r, (*zstd.Decoder).Close)
 	}
 
