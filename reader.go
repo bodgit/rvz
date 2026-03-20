@@ -219,7 +219,7 @@ func (r *reader) nextReader() (err error) {
 
 	for i, x := range r.part {
 		for j := range x.Data {
-			if r.offset == int64(x.Data[j].FirstSector*util.SectorSize) && x.Data[j].NumSector > 0 {
+			if r.offset == int64(x.Data[j].FirstSector)*util.SectorSize && x.Data[j].NumSector > 0 {
 				r.r = newPartReader(r, i, j)
 
 				return
