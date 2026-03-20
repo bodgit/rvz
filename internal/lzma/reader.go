@@ -1,3 +1,4 @@
+// Package lzma implements LZMA compression
 package lzma
 
 import (

@@ -1,3 +1,4 @@
+// Package padding implements the GameCube and Wii padding data
 package padding
 
 import (
@@ -20,34 +21,6 @@ var prngPool, bufPool sync.Pool
 type readCloser struct {
 	prng []uint32
 	buf  *bytes.Buffer
-}
-
-func (rc *readCloser) advance() {
-	for i := range rc.prng {
-		rc.prng[i] ^= rc.prng[(i+len(rc.prng)-32)%len(rc.prng)]
-	}
-}
-
-func (rc *readCloser) Read(p []byte) (int, error) {
-	if rc.buf.Len() == 0 {
-		for _, x := range rc.prng {
-			_ = rc.buf.WriteByte(byte(0xff & (x >> 24)))
-			_ = rc.buf.WriteByte(byte(0xff & (x >> 18))) // not 16!
-			_ = rc.buf.WriteByte(byte(0xff & (x >> 8)))
-			_ = rc.buf.WriteByte(byte(0xff & (x)))
-		}
-
-		rc.advance()
-	}
-
-	return rc.buf.Read(p)
-}
-
-func (rc *readCloser) Close() error {
-	prngPool.Put(&rc.prng)
-	bufPool.Put(rc.buf)
-
-	return nil
 }
 
 // NewReadCloser returns an io.ReadCloser that generates a stream of GameCube
@@ -85,7 +58,7 @@ func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
 		rc.prng[i] = rc.prng[i-17]<<23 ^ rc.prng[i-16]>>9 ^ rc.prng[i-1]
 	}
 
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		rc.advance()
 	}
 
@@ -94,4 +67,32 @@ func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
 	}
 
 	return rc, nil
+}
+
+func (rc *readCloser) Read(p []byte) (int, error) {
+	if rc.buf.Len() == 0 {
+		for _, x := range rc.prng {
+			_ = rc.buf.WriteByte(byte(0xff & (x >> 24)))
+			_ = rc.buf.WriteByte(byte(0xff & (x >> 18))) // not 16!
+			_ = rc.buf.WriteByte(byte(0xff & (x >> 8)))
+			_ = rc.buf.WriteByte(byte(0xff & (x)))
+		}
+
+		rc.advance()
+	}
+
+	return rc.buf.Read(p)
+}
+
+func (rc *readCloser) Close() error {
+	prngPool.Put(&rc.prng)
+	bufPool.Put(rc.buf)
+
+	return nil
+}
+
+func (rc *readCloser) advance() {
+	for i := range rc.prng {
+		rc.prng[i] ^= rc.prng[(i+len(rc.prng)-32)%len(rc.prng)]
+	}
 }

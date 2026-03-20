@@ -1,3 +1,4 @@
+// Package main implements the rvz cli
 package main
 
 import (
@@ -45,7 +46,7 @@ func decompress(c *cli.Context) error {
 		dst = strings.TrimSuffix(src, rvz.Extension) + isoExtension
 	}
 
-	f, err := os.Open(src)
+	f, err := os.Open(filepath.Clean(src))
 	if err != nil {
 		return err
 	}
@@ -58,7 +59,7 @@ func decompress(c *cli.Context) error {
 
 	var w io.WriteCloser
 
-	w, err = os.Create(dst)
+	w, err = os.Create(filepath.Clean(dst))
 	if err != nil {
 		return err
 	}

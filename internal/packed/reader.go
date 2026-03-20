@@ -1,3 +1,4 @@
+// Package packed implements the RVZ packed stream format
 package packed
 
 import (
@@ -24,6 +25,49 @@ type readCloser struct {
 	size   int64
 	buf    *bytes.Buffer
 	offset int64
+}
+
+// NewReadCloser returns a new io.ReadCloser that reads the RVZ packed stream
+// from the underlying io.ReadCloser rc. The offset of where this packed stream
+// starts relative to the beginning of the uncompressed disc image is also
+// required.
+func NewReadCloser(rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
+	nrc := &readCloser{
+		rc:     rc,
+		offset: offset,
+	}
+
+	b, ok := pool.Get().(*bytes.Buffer)
+	if ok {
+		b.Reset()
+	} else {
+		b = new(bytes.Buffer)
+		b.Grow(1 << 16)
+	}
+
+	nrc.buf = b
+
+	return nrc, nil
+}
+
+func (rc *readCloser) Read(p []byte) (int, error) {
+	if err := rc.read(); err != nil && !errors.Is(err, io.EOF) {
+		return 0, err
+	}
+
+	return rc.buf.Read(p)
+}
+
+func (rc *readCloser) Close() (err error) {
+	pool.Put(rc.buf)
+
+	if rc.src != nil {
+		if err = rc.src.Close(); err != nil {
+			return
+		}
+	}
+
+	return rc.rc.Close()
 }
 
 func (rc *readCloser) nextReader() (err error) {
@@ -94,47 +138,4 @@ func (rc *readCloser) read() (err error) {
 	}
 
 	return nil
-}
-
-func (rc *readCloser) Read(p []byte) (int, error) {
-	if err := rc.read(); err != nil && !errors.Is(err, io.EOF) {
-		return 0, err
-	}
-
-	return rc.buf.Read(p)
-}
-
-func (rc *readCloser) Close() (err error) {
-	pool.Put(rc.buf)
-
-	if rc.src != nil {
-		if err = rc.src.Close(); err != nil {
-			return
-		}
-	}
-
-	return rc.rc.Close()
-}
-
-// NewReadCloser returns a new io.ReadCloser that reads the RVZ packed stream
-// from the underlying io.ReadCloser rc. The offset of where this packed stream
-// starts relative to the beginning of the uncompressed disc image is also
-// required.
-func NewReadCloser(rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
-	nrc := &readCloser{
-		rc:     rc,
-		offset: offset,
-	}
-
-	b, ok := pool.Get().(*bytes.Buffer)
-	if ok {
-		b.Reset()
-	} else {
-		b = new(bytes.Buffer)
-		b.Grow(1 << 16)
-	}
-
-	nrc.buf = b
-
-	return nrc, nil
 }
