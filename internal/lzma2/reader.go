@@ -1,3 +1,4 @@
+// Package lzma2 implements LZMA2 compression
 package lzma2
 
 import (

@@ -1,3 +1,4 @@
+// Package rvz implements the RVZ disc image compression format
 package rvz
 
 import (
@@ -68,14 +69,17 @@ type disc struct {
 }
 
 func (d *disc) partReader(ra io.ReaderAt) io.Reader {
+	//nolint:gosec
 	return io.NewSectionReader(ra, int64(d.PartOff), int64(d.NumPart*d.PartSize))
 }
 
 func (d *disc) rawReader(ra io.ReaderAt) io.Reader {
+	//nolint:gosec
 	return io.NewSectionReader(ra, int64(d.RawDataOff), int64(d.RawDataSize))
 }
 
 func (d *disc) groupReader(ra io.ReaderAt) io.Reader {
+	//nolint:gosec
 	return io.NewSectionReader(ra, int64(d.GroupOff), int64(d.GroupSize))
 }
 
@@ -149,149 +153,6 @@ type reader struct {
 
 	r      io.Reader
 	offset int64
-}
-
-func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
-	dcomp := decompressor(r.disc.Compression)
-	if dcomp == nil {
-		return nil, errors.New("rvz: unsupported algorithm")
-	}
-
-	return dcomp(r.disc.ComprData[0:r.disc.ComprDataLen], reader)
-}
-
-//nolint:cyclop,unparam
-func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadCloser, exceptions []except, err error) {
-	group := r.group[g]
-
-	switch {
-	case group.compressed():
-		rc, err = r.decompressor(io.NewSectionReader(r.ra, group.offset(), group.size()))
-		if err != nil {
-			return nil, nil, err
-		}
-	case group.size() == 0:
-		rc = io.NopCloser(io.LimitReader(plumbing.DevZero(), r.disc.chunkSize(partition)))
-	default:
-		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
-	}
-
-	//nolint:nestif
-	if partition {
-		wc := new(plumbing.WriteCounter)
-		tr := io.TeeReader(rc, wc)
-
-		var numExceptions uint16
-		if err = binary.Read(tr, binary.BigEndian, &numExceptions); err != nil {
-			return nil, nil, err
-		}
-
-		if numExceptions > 0 {
-			return nil, nil, errors.New("TODO handle exceptions")
-		}
-
-		// No compression, data starts on the next 4 byte boundary
-		if !group.compressed() {
-			if _, err = io.CopyN(io.Discard, rc, (group.offset()+int64(wc.Count()))%4); err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-
-	if group.PackedSize != 0 {
-		rc, err = packed.NewReadCloser(rc, offset)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return rc, nil, nil
-}
-
-func (r *reader) nextReader() (err error) {
-	for i, x := range r.raw {
-		if r.offset == int64(x.RawDataOff) {
-			r.r = newRawReader(r, i)
-
-			return
-		}
-	}
-
-	for i, x := range r.part {
-		for j := range x.Data {
-			if r.offset == int64(x.Data[j].FirstSector*util.SectorSize) && x.Data[j].NumSector > 0 {
-				r.r = newPartReader(r, i, j)
-
-				return
-			}
-		}
-	}
-
-	return errors.New("rvz: cannot find reader")
-}
-
-func (r *reader) Read(p []byte) (n int, err error) {
-	if r.offset == int64(r.header.IsoFileSize) {
-		return 0, io.EOF
-	}
-
-	if r.r == nil {
-		if err = r.nextReader(); err != nil {
-			return
-		}
-	}
-
-	n, err = r.r.Read(p)
-	r.offset += int64(n)
-
-	if err != nil {
-		if !errors.Is(err, io.EOF) {
-			return
-		}
-
-		r.r, err = nil, nil
-	}
-
-	return
-}
-
-func (r *reader) Size() int64 {
-	return int64(r.header.IsoFileSize)
-}
-
-func (r *reader) readRaw() error {
-	cr, err := r.decompressor(r.disc.rawReader(r.ra))
-	if err != nil {
-		return err
-	}
-	defer cr.Close()
-
-	r.raw = make([]raw, r.disc.NumRawData)
-	if err = binary.Read(cr, binary.BigEndian, &r.raw); err != nil {
-		return err
-	}
-
-	// Make sure every area starts on a sector boundary, which is mostly
-	// for the benefit of the area at the beginning of the disc
-	for i := range r.raw {
-		remain := r.raw[i].RawDataOff % util.SectorSize
-		r.raw[i].RawDataOff -= remain
-		r.raw[i].RawDataSize += remain
-	}
-
-	return nil
-}
-
-func (r *reader) readGroup() error {
-	cr, err := r.decompressor(r.disc.groupReader(r.ra))
-	if err != nil {
-		return err
-	}
-	defer cr.Close()
-
-	r.group = make([]group, r.disc.NumGroup)
-
-	return binary.Read(cr, binary.BigEndian, &r.group)
 }
 
 // NewReader returns a new io.Reader that reads and decompresses from ra.
@@ -380,4 +241,151 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 	}
 
 	return r, nil
+}
+
+func (r *reader) Read(p []byte) (n int, err error) {
+	//nolint:gosec
+	if r.offset == int64(r.header.IsoFileSize) {
+		return 0, io.EOF
+	}
+
+	if r.r == nil {
+		if err = r.nextReader(); err != nil {
+			return
+		}
+	}
+
+	n, err = r.r.Read(p)
+	r.offset += int64(n)
+
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			return
+		}
+
+		r.r, err = nil, nil
+	}
+
+	return
+}
+
+func (r *reader) Size() int64 {
+	//nolint:gosec
+	return int64(r.header.IsoFileSize)
+}
+
+func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
+	dcomp := decompressor(r.disc.Compression)
+	if dcomp == nil {
+		return nil, errors.New("rvz: unsupported algorithm")
+	}
+
+	return dcomp(r.disc.ComprData[0:r.disc.ComprDataLen], reader)
+}
+
+//nolint:cyclop,unparam
+func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadCloser, exceptions []except, err error) {
+	group := r.group[g]
+
+	switch {
+	case group.compressed():
+		rc, err = r.decompressor(io.NewSectionReader(r.ra, group.offset(), group.size()))
+		if err != nil {
+			return nil, nil, err
+		}
+	case group.size() == 0:
+		rc = io.NopCloser(io.LimitReader(plumbing.DevZero(), r.disc.chunkSize(partition)))
+	default:
+		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
+	}
+
+	//nolint:nestif
+	if partition {
+		wc := new(plumbing.WriteCounter)
+		tr := io.TeeReader(rc, wc)
+
+		var numExceptions uint16
+		if err = binary.Read(tr, binary.BigEndian, &numExceptions); err != nil {
+			return nil, nil, err
+		}
+
+		if numExceptions > 0 {
+			return nil, nil, errors.New("TODO handle exceptions")
+		}
+
+		// No compression, data starts on the next 4 byte boundary
+		if !group.compressed() {
+			//nolint:gosec
+			if _, err = io.CopyN(io.Discard, rc, (group.offset()+int64(wc.Count()))%4); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	if group.PackedSize != 0 {
+		rc, err = packed.NewReadCloser(rc, offset)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return rc, nil, nil
+}
+
+func (r *reader) nextReader() (err error) {
+	for i, x := range r.raw {
+		//nolint:gosec
+		if r.offset == int64(x.RawDataOff) {
+			r.r = newRawReader(r, i)
+
+			return
+		}
+	}
+
+	for i, x := range r.part {
+		for j := range x.Data {
+			if r.offset == int64(x.Data[j].FirstSector*util.SectorSize) && x.Data[j].NumSector > 0 {
+				r.r = newPartReader(r, i, j)
+
+				return
+			}
+		}
+	}
+
+	return errors.New("rvz: cannot find reader")
+}
+
+func (r *reader) readRaw() error {
+	cr, err := r.decompressor(r.disc.rawReader(r.ra))
+	if err != nil {
+		return err
+	}
+	defer cr.Close()
+
+	r.raw = make([]raw, r.disc.NumRawData)
+	if err = binary.Read(cr, binary.BigEndian, &r.raw); err != nil {
+		return err
+	}
+
+	// Make sure every area starts on a sector boundary, which is mostly
+	// for the benefit of the area at the beginning of the disc
+	for i := range r.raw {
+		remain := r.raw[i].RawDataOff % util.SectorSize
+		r.raw[i].RawDataOff -= remain
+		r.raw[i].RawDataSize += remain
+	}
+
+	return nil
+}
+
+func (r *reader) readGroup() error {
+	cr, err := r.decompressor(r.disc.groupReader(r.ra))
+	if err != nil {
+		return err
+	}
+	defer cr.Close()
+
+	r.group = make([]group, r.disc.NumGroup)
+
+	return binary.Read(cr, binary.BigEndian, &r.group)
 }

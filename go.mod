@@ -1,6 +1,6 @@
 module github.com/bodgit/rvz
 
-go 1.19
+go 1.25
 
 require (
 	github.com/bodgit/plumbing v1.3.0

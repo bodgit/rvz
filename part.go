@@ -33,14 +33,6 @@ const (
 	groupSize = util.SectorSize * clusters // 2 MiB
 )
 
-func min(x, y int) int {
-	if x < y {
-		return x
-	}
-
-	return y
-}
-
 type partReader struct {
 	h0 [clusters]*bytes.Buffer
 	h1 [subGroup]io.Writer
@@ -56,12 +48,70 @@ type partReader struct {
 	sector int
 }
 
+func newPartReader(r *reader, p, d int) io.Reader {
+	pr := &partReader{
+		p: p,
+		d: d,
+		r: r,
+	}
+
+	pr.buf = make([]byte, 0, groupSize) // 2 MiB
+	pr.br = bytes.NewReader(pr.buf)
+
+	h1 := make([][]io.Writer, subGroup)
+	for i := range h1 {
+		h1[i] = make([]io.Writer, 0, subGroup)
+	}
+
+	for i := range pr.h0 {
+		pr.h0[i] = new(bytes.Buffer)
+		pr.h0[i].Grow(hashSize) // 0x400
+
+		j := i / subGroup
+
+		h1[j] = append(h1[j], pr.h0[i])
+	}
+
+	for i := range pr.cluster {
+		pr.cluster[i] = new(bytes.Buffer)
+		pr.cluster[i].Grow(util.SectorSize - hashSize) // 0x7c00
+	}
+
+	for i := range pr.h1 {
+		pr.h1[i] = io.MultiWriter(h1[i]...)
+	}
+
+	pr.h2 = io.MultiWriter(pr.h1[:]...)
+
+	return pr
+}
+
+func (pr *partReader) Read(p []byte) (n int, err error) {
+	if pr.br.Len() == 0 {
+		if pr.sector == int(pr.r.part[pr.p].Data[pr.d].NumSector) {
+			return 0, io.EOF
+		}
+
+		if err = pr.read(); err != nil {
+			return
+		}
+
+		pr.br.Reset(pr.buf)
+
+		pr.sector += pr.br.Len() / util.SectorSize
+	}
+
+	n, err = pr.br.Read(p)
+
+	return
+}
+
 func (pr *partReader) groupOffset(g int) int64 {
 	return (int64(g) - int64(pr.r.part[pr.p].Data[pr.d].GroupIndex)) * pr.r.disc.chunkSize(true)
 }
 
 func (pr *partReader) reset() {
-	for i := 0; i < clusters; i++ {
+	for i := range clusters {
 		pr.h0[i].Reset()
 		pr.cluster[i].Reset()
 	}
@@ -100,7 +150,7 @@ func (pr *partReader) readGroup(i int) error {
 			r = zr
 		}
 
-		for k := 0; k < blocksPerCluster; k++ {
+		for range blocksPerCluster {
 			h.Reset()
 
 			if _, err := io.CopyN(pr.cluster[j], io.TeeReader(r, h), blockSize); err != nil {
@@ -122,8 +172,8 @@ func (pr *partReader) writeHashes() {
 	buf := make([]byte, hashSize)
 
 	// Calculate the H1 hashes
-	for i := 0; i < subGroup; i++ {
-		for j := 0; j < subGroup; j++ {
+	for i := range subGroup {
+		for j := range subGroup {
 			h.Reset()
 			_, _ = io.CopyBuffer(h, io.LimitReader(bytes.NewReader(pr.h0[i*subGroup+j].Bytes()), h0Size), buf)
 			_, _ = pr.h1[i].Write(h.Sum(nil))
@@ -133,7 +183,7 @@ func (pr *partReader) writeHashes() {
 	}
 
 	// Calculate the H2 hashes
-	for i := 0; i < subGroup; i++ {
+	for i := range subGroup {
 		h.Reset()
 		_, _ = io.CopyBuffer(h,
 			io.NewSectionReader(bytes.NewReader(pr.h0[i*subGroup].Bytes()), h0Size+h0Padding, h1Size),
@@ -175,9 +225,7 @@ func (pr *partReader) read() (err error) {
 
 	pr.reset()
 
-	for i := 0; i < groupSize/int(pr.r.disc.ChunkSize); i++ {
-		i := i
-
+	for i := range groupSize / int(pr.r.disc.ChunkSize) {
 		eg.Go(func() error {
 			return pr.readGroup(i)
 		})
@@ -193,9 +241,7 @@ func (pr *partReader) read() (err error) {
 
 	pr.buf = pr.buf[:(sectors * util.SectorSize)]
 
-	for i := 0; i < sectors; i++ {
-		i := i
-
+	for i := range sectors {
 		eg.Go(func() error {
 			return pr.encryptSector(i)
 		})
@@ -206,62 +252,4 @@ func (pr *partReader) read() (err error) {
 	}
 
 	return nil
-}
-
-func (pr *partReader) Read(p []byte) (n int, err error) {
-	if pr.br.Len() == 0 {
-		if pr.sector == int(pr.r.part[pr.p].Data[pr.d].NumSector) {
-			return 0, io.EOF
-		}
-
-		if err = pr.read(); err != nil {
-			return
-		}
-
-		pr.br.Reset(pr.buf)
-
-		pr.sector += pr.br.Len() / util.SectorSize
-	}
-
-	n, err = pr.br.Read(p)
-
-	return
-}
-
-func newPartReader(r *reader, p, d int) io.Reader {
-	pr := &partReader{
-		p: p,
-		d: d,
-		r: r,
-	}
-
-	pr.buf = make([]byte, 0, groupSize) // 2 MiB
-	pr.br = bytes.NewReader(pr.buf)
-
-	h1 := make([][]io.Writer, subGroup)
-	for i := range h1 {
-		h1[i] = make([]io.Writer, 0, subGroup)
-	}
-
-	for i := range pr.h0 {
-		pr.h0[i] = new(bytes.Buffer)
-		pr.h0[i].Grow(hashSize) // 0x400
-
-		j := i / subGroup
-
-		h1[j] = append(h1[j], pr.h0[i])
-	}
-
-	for i := range pr.cluster {
-		pr.cluster[i] = new(bytes.Buffer)
-		pr.cluster[i].Grow(util.SectorSize - hashSize) // 0x7c00
-	}
-
-	for i := range pr.h1 {
-		pr.h1[i] = io.MultiWriter(h1[i]...)
-	}
-
-	pr.h2 = io.MultiWriter(pr.h1[:]...)
-
-	return pr
 }

@@ -1,3 +1,4 @@
+// Package zstd implements Zstandard compression
 package zstd
 
 import (
