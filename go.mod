@@ -8,7 +8,7 @@ require (
 	github.com/klauspost/compress v1.17.7
 	github.com/schollz/progressbar/v3 v3.14.2
 	github.com/stretchr/testify v1.11.1
-	github.com/ulikunitz/xz v0.5.12
+	github.com/ulikunitz/xz v0.5.15
 	github.com/urfave/cli/v2 v2.27.7
 	golang.org/x/sync v0.7.0
 )
