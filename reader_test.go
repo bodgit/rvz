@@ -42,6 +42,11 @@ func TestReader(t *testing.T) {
 			dat:  wii,
 			file: "Metal Slug Anthology (USA)",
 		},
+		{
+			name: "Issue #121",
+			dat:  wii,
+			file: "Mario Kart Wii (USA) (En,Fr,Es)",
+		},
 	}
 
 	for _, table := range tables {
