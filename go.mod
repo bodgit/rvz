@@ -1,6 +1,6 @@
 module github.com/bodgit/rvz
 
-go 1.19
+go 1.22
 
 require (
 	github.com/bodgit/plumbing v1.3.0
@@ -9,7 +9,8 @@ require (
 	github.com/schollz/progressbar/v3 v3.14.2
 	github.com/stretchr/testify v1.11.1
 	github.com/ulikunitz/xz v0.5.15
-	github.com/urfave/cli/v2 v2.27.7
+	github.com/urfave/cli/v2 v2.24.1
+	github.com/urfave/cli/v3 v3.8.0
 	golang.org/x/sync v0.7.0
 )
 
