@@ -1,15 +1,16 @@
 module github.com/bodgit/rvz
 
-go 1.19
+go 1.22
 
 require (
 	github.com/bodgit/plumbing v1.3.0
 	github.com/bodgit/rom v0.0.1
 	github.com/klauspost/compress v1.17.7
 	github.com/schollz/progressbar/v3 v3.14.2
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/ulikunitz/xz v0.5.15
-	github.com/urfave/cli/v2 v2.27.7
+	github.com/urfave/cli/v2 v2.24.1
+	github.com/urfave/cli/v3 v3.12.0
 	golang.org/x/sync v0.7.0
 )
 
@@ -32,6 +33,7 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/uwedeportivo/torrentzip v1.0.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go4.org v0.0.0-20201209231011-d4a079459e60 // indirect
 	golang.org/x/net v0.5.0 // indirect
 	golang.org/x/sys v0.17.0 // indirect
