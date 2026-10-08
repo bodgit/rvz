@@ -164,15 +164,17 @@ func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
 func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadCloser, exceptions []except, err error) {
 	group := r.group[g]
 
-	switch {
-	case group.compressed():
+	// An empty group is all zeroes with no exceptions or packing
+	if group.size() == 0 {
+		return io.NopCloser(io.LimitReader(plumbing.DevZero(), r.disc.chunkSize(partition))), nil, nil
+	}
+
+	if group.compressed() {
 		rc, err = r.decompressor(io.NewSectionReader(r.ra, group.offset(), group.size()))
 		if err != nil {
 			return nil, nil, err
 		}
-	case group.size() == 0:
-		rc = io.NopCloser(io.LimitReader(plumbing.DevZero(), r.disc.chunkSize(partition)))
-	default:
+	} else {
 		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
 	}
 
