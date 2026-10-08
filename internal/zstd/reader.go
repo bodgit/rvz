@@ -16,7 +16,8 @@ type readCloser struct {
 }
 
 func (rc *readCloser) Close() error {
-	zstdReaderPool.Put(rc)
+	zstdReaderPool.Put(rc.Decoder)
+	rc.Decoder = nil
 
 	return nil
 }
@@ -31,7 +32,9 @@ func NewReader(_ []byte, reader io.Reader) (io.ReadCloser, error) {
 			return nil, err
 		}
 	} else {
-		if r, err = zstd.NewReader(reader); err != nil {
+		// Groups are already decompressed in parallel so use a
+		// synchronous decoder to avoid spawning extra goroutines
+		if r, err = zstd.NewReader(reader, zstd.WithDecoderConcurrency(1)); err != nil {
 			return nil, err
 		}
 
