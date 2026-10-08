@@ -117,7 +117,7 @@ type group struct {
 }
 
 func (g *group) offset() int64 {
-	return int64(g.Offset << 2)
+	return int64(g.Offset) << 2
 }
 
 const (
