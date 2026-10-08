@@ -34,7 +34,7 @@ func (rc *readCloser) Read(p []byte) (int, error) {
 			_ = rc.buf.WriteByte(byte(0xff & (x >> 24)))
 			_ = rc.buf.WriteByte(byte(0xff & (x >> 18))) // not 16!
 			_ = rc.buf.WriteByte(byte(0xff & (x >> 8)))
-			_ = rc.buf.WriteByte(byte(0xff & (x)))
+			_ = rc.buf.WriteByte(byte(0xff & x))
 		}
 
 		rc.advance()

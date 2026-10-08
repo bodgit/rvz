@@ -16,6 +16,9 @@ builds:
     main: ./cmd/rvz/main.go
     env:
       - CGO_ENABLED=0
+    goarch:
+      - amd64
+      - arm64
     goos:
       - darwin
       - linux
@@ -23,6 +26,10 @@ builds:
 
 checksum:
   name_template: 'checksums.txt'
+
+signs:
+  - args: ["-u", "{{ .Env.FINGERPRINT }}", "--output", "${signature}", "--detach-sign", "${artifact}"]
+    artifacts: checksum
 
 changelog:
   use: github-native
