@@ -176,6 +176,15 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
 	}
 
+	// Error returns set rc to nil, so keep hold of it to close
+	src := rc
+
+	defer func() {
+		if err != nil {
+			_ = src.Close()
+		}
+	}()
+
 	//nolint:nestif
 	if partition {
 		wc := new(plumbing.WriteCounter)
