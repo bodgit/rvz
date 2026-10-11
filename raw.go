@@ -3,6 +3,8 @@ package rvz
 import (
 	"errors"
 	"io"
+
+	"github.com/bodgit/plumbing"
 )
 
 type rawReader struct {
@@ -12,8 +14,10 @@ type rawReader struct {
 	offset int64
 }
 
+//nolint:nakedret
 func (rr *rawReader) Read(p []byte) (n int, err error) {
-	if rr.offset == int64(rr.r.raw[rr.i].RawDataOff+rr.r.raw[rr.i].RawDataSize) {
+	end := int64(rr.r.raw[rr.i].RawDataOff + rr.r.raw[rr.i].RawDataSize)
+	if rr.offset == end {
 		return n, io.EOF
 	}
 
@@ -21,6 +25,9 @@ func (rr *rawReader) Read(p []byte) (n int, err error) {
 		if rr.gr, _, err = rr.r.groupReader(rr.g, rr.offset, false); err != nil {
 			return
 		}
+
+		// The last group may be shorter than the chunk size
+		rr.gr = plumbing.LimitReadCloser(rr.gr, end-rr.offset)
 	}
 
 	n, err = rr.gr.Read(p)
