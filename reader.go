@@ -68,7 +68,7 @@ type disc struct {
 }
 
 func (d *disc) partReader(ra io.ReaderAt) io.Reader {
-	return io.NewSectionReader(ra, int64(d.PartOff), int64(d.NumPart*d.PartSize))
+	return io.NewSectionReader(ra, int64(d.PartOff), int64(d.NumPart)*int64(d.PartSize))
 }
 
 func (d *disc) rawReader(ra io.ReaderAt) io.Reader {
@@ -219,7 +219,7 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 
 func (r *reader) nextReader() (err error) {
 	for i, x := range r.raw {
-		if r.offset == int64(x.RawDataOff) {
+		if r.offset == int64(x.RawDataOff) && x.RawDataSize > 0 {
 			r.r = newRawReader(r, i)
 
 			return
@@ -328,6 +328,10 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 		return nil, errors.New("rvz: header hash doesn't match")
 	}
 
+	if err := r.header.validate(); err != nil {
+		return nil, err
+	}
+
 	h.Reset()
 
 	if int(r.header.DiscSize) != binary.Size(r.disc) {
@@ -363,6 +367,10 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 		return nil, errors.New("rvz: bad chunk size")
 	}
 
+	if err := r.disc.validate(&r.header); err != nil {
+		return nil, err
+	}
+
 	h.Reset()
 
 	if r.disc.NumPart > 0 {
@@ -381,6 +389,10 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 	}
 
 	if err := r.readRaw(); err != nil {
+		return nil, err
+	}
+
+	if err := r.validateEntries(); err != nil {
 		return nil, err
 	}
 
