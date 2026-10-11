@@ -3,7 +3,6 @@
 package padding
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -15,42 +14,76 @@ import (
 const (
 	initialSize = 17
 	maximumSize = 521
+	lag         = 32
+
+	blockSize = maximumSize * 4 // bytes generated per advance
 )
 
 //nolint:gochecknoglobals
-var prngPool, bufPool sync.Pool
+var pool = sync.Pool{
+	New: func() any {
+		return new(generator)
+	},
+}
+
+type generator struct {
+	prng [maximumSize]uint32
+	buf  [blockSize]byte
+}
 
 type readCloser struct {
-	prng []uint32
-	buf  *bytes.Buffer
+	g   *generator
+	pos int
 }
 
 func (rc *readCloser) Read(p []byte) (int, error) {
-	if rc.buf.Len() == 0 {
-		for _, x := range rc.prng {
-			_ = rc.buf.WriteByte(byte(0xff & (x >> 24)))
-			_ = rc.buf.WriteByte(byte(0xff & (x >> 18))) // not 16!
-			_ = rc.buf.WriteByte(byte(0xff & (x >> 8)))
-			_ = rc.buf.WriteByte(byte(0xff & x))
-		}
-
-		rc.advance()
+	if rc.pos == blockSize {
+		rc.fill()
 	}
 
-	// The buffer was refilled above so this can't fail
-	return copy(p, rc.buf.Next(len(p))), nil
+	n := copy(p, rc.g.buf[rc.pos:])
+	rc.pos += n
+
+	return n, nil
 }
 
 func (rc *readCloser) Close() error {
-	prngPool.Put(&rc.prng)
-	bufPool.Put(rc.buf)
+	if rc.g != nil {
+		pool.Put(rc.g)
+		rc.g = nil
+	}
 
 	return nil
 }
 
+// fill generates the next block of padding from the current state and then
+// advances it.
+func (rc *readCloser) fill() {
+	buf := rc.g.buf[:]
+
+	for i, x := range rc.g.prng {
+		b := buf[i*4 : i*4+4]
+		b[0] = byte(0xff & (x >> 24))
+		b[1] = byte(0xff & (x >> 18)) // not 16!
+		b[2] = byte(0xff & (x >> 8))
+		b[3] = byte(0xff & x)
+	}
+
+	rc.advance()
+	rc.pos = 0
+}
+
 func (rc *readCloser) advance() {
-	for i := range rc.prng {
-		rc.prng[i] ^= rc.prng[(i+len(rc.prng)-32)%len(rc.prng)]
+	prng := &rc.g.prng
+
+	// The first few entries mix in entries from the end that haven't
+	// been advanced yet, so the order matters
+	for i := range lag {
+		prng[i] ^= prng[i+maximumSize-lag]
+	}
+
+	for i := lag; i < maximumSize; i++ {
+		prng[i] ^= prng[i-lag]
 	}
 }
 
@@ -59,43 +92,37 @@ func (rc *readCloser) advance() {
 // where this padded stream starts relative to the beginning of the
 // uncompressed disc image or the partition is also required.
 func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
-	rc := new(readCloser)
-
-	p, ok := prngPool.Get().(*[]uint32)
-	if ok {
-		rc.prng = *p
-		rc.prng = rc.prng[:initialSize]
-	} else {
-		rc.prng = make([]uint32, initialSize, maximumSize)
+	g, ok := pool.Get().(*generator)
+	if !ok {
+		g = new(generator)
 	}
 
-	if err := binary.Read(r, binary.BigEndian, rc.prng); err != nil {
+	rc := &readCloser{g: g}
+
+	if err := binary.Read(r, binary.BigEndian, g.prng[:initialSize]); err != nil {
+		_ = rc.Close()
+
 		return nil, fmt.Errorf("padding: reading seed: %w", err)
 	}
 
-	rc.prng = rc.prng[:maximumSize]
-
-	b, ok := bufPool.Get().(*bytes.Buffer)
-	if ok {
-		b.Reset()
-	} else {
-		b = new(bytes.Buffer)
-		b.Grow(maximumSize << 2)
-	}
-
-	rc.buf = b
-
 	for i := initialSize; i < maximumSize; i++ {
-		rc.prng[i] = rc.prng[i-17]<<23 ^ rc.prng[i-16]>>9 ^ rc.prng[i-1]
+		g.prng[i] = g.prng[i-17]<<23 ^ g.prng[i-16]>>9 ^ g.prng[i-1]
 	}
 
 	for range 4 {
 		rc.advance()
 	}
 
-	if _, err := io.CopyN(io.Discard, rc, offset%util.SectorSize); err != nil {
-		return nil, fmt.Errorf("padding: skipping to offset: %w", err)
+	// Skip whole blocks without generating them, the offset into a
+	// sector is at most 32 KiB so this can't overflow
+	skip := int(offset % util.SectorSize)
+
+	for range skip / blockSize {
+		rc.advance()
 	}
+
+	rc.fill()
+	rc.pos = skip % blockSize
 
 	return rc, nil
 }
