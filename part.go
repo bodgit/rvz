@@ -6,8 +6,6 @@ import (
 	"crypto/sha1" //nolint:gosec
 	"fmt"
 	"io"
-	"runtime"
-	"sync"
 
 	"github.com/bodgit/rvz/internal/util"
 )
@@ -35,137 +33,25 @@ const (
 	groupSize = util.SectorSize * clusters // 2 MiB
 )
 
-// A partBlock is a 2 MiB block of partition data being rebuilt in the
-// background.
-type partBlock struct {
-	buf  *[]byte
-	size int
-	err  error
-	done chan struct{}
-}
-
 // A partReader rebuilds the encrypted partition data. Each 2 MiB block is
-// rebuilt independently by its own goroutine, with several running ahead of
-// the reader and the results returned in order.
+// rebuilt independently so they can be prefetched in parallel.
 type partReader struct {
 	p, d int
 	r    *reader
-
-	block cipher.Block
-
-	next    int          // next block to start
-	blocks  int          // total number of blocks
-	pending []*partBlock // started but not yet read, in order
-	buf     *[]byte      // buffer of the block being read
-	data    []byte       // unread data in buf
-	err     error
-}
-
-//nolint:gochecknoglobals
-var blockPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, groupSize)
-
-		return &b
-	},
-}
-
-func (pr *partReader) Read(p []byte) (int, error) {
-	if len(pr.data) == 0 {
-		if err := pr.nextBlock(); err != nil {
-			return 0, err
-		}
-	}
-
-	n := copy(p, pr.data)
-	pr.data = pr.data[n:]
-
-	return n, nil
 }
 
 func (pr *partReader) area() partData {
 	return pr.r.part[pr.p].Data[pr.d]
 }
 
-// nextBlock waits for the next block to be rebuilt and makes it available to
-// Read, keeping enough blocks in flight to use every CPU.
-func (pr *partReader) nextBlock() error {
-	if pr.err != nil {
-		return pr.err
-	}
-
-	// The current block has been read so its buffer can be reused
-	if pr.buf != nil {
-		blockPool.Put(pr.buf)
-		pr.buf, pr.data = nil, nil
-	}
-
-	if pr.block == nil {
-		block, err := aes.NewCipher(pr.r.part[pr.p].Key[:])
-		if err != nil {
-			pr.err = fmt.Errorf("rvz: %w", err)
-
-			return pr.err
-		}
-
-		pr.block = block
-	}
-
-	pr.start()
-
-	if len(pr.pending) == 0 {
-		return io.EOF
-	}
-
-	b := pr.pending[0]
-	pr.pending = pr.pending[1:]
-
-	<-b.done
-
-	if b.err != nil {
-		pr.err = b.err
-
-		return pr.err
-	}
-
-	pr.buf = b.buf
-	pr.data = (*b.buf)[:b.size]
-
-	// Start another block to replace this one
-	pr.start()
-
-	return nil
-}
-
-// start rebuilds blocks in the background until enough are in flight.
-func (pr *partReader) start() {
-	for pr.next < pr.blocks && len(pr.pending) < runtime.GOMAXPROCS(0) {
-		buf, ok := blockPool.Get().(*[]byte)
-		if !ok {
-			b := make([]byte, groupSize)
-			buf = &b
-		}
-
-		b := &partBlock{
-			buf:  buf,
-			done: make(chan struct{}),
-		}
-
-		go func(i int) {
-			defer close(b.done)
-
-			b.size, b.err = pr.rebuild(i, *b.buf)
-		}(pr.next)
-
-		pr.pending = append(pr.pending, b)
-		pr.next++
-	}
-}
-
 // rebuild reconstructs the i-th 2 MiB block of the partition into buf,
-// returning how much of it is used. Only immutable fields of pr are used so
-// blocks can be rebuilt concurrently.
+// returning how much of it is used.
 func (pr *partReader) rebuild(i int, buf []byte) (int, error) {
+	block, err := aes.NewCipher(pr.r.part[pr.p].Key[:])
+	if err != nil {
+		return 0, fmt.Errorf("rvz: %w", err)
+	}
+
 	first := i * clusters
 	sectors := min(clusters, int(pr.area().NumSector)-first)
 
@@ -180,7 +66,7 @@ func (pr *partReader) rebuild(i int, buf []byte) (int, error) {
 		return 0, err
 	}
 
-	e := newSectorEncrypter(pr.block)
+	e := newSectorEncrypter(block)
 
 	for s := range sectors {
 		e.encrypt(buf[s*util.SectorSize : (s+1)*util.SectorSize])
@@ -358,7 +244,7 @@ func newPartReader(r *reader, p, d int) io.Reader {
 		r: r,
 	}
 
-	pr.blocks = (int(pr.area().NumSector) + clusters - 1) / clusters
+	blocks := (int(pr.area().NumSector) + clusters - 1) / clusters
 
-	return pr
+	return newPrefetcher(blocks, pr.rebuild)
 }
