@@ -160,7 +160,7 @@ func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
 	return dcomp(r.disc.ComprData[0:r.disc.ComprDataLen], reader)
 }
 
-//nolint:cyclop,unparam
+//nolint:cyclop
 func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadCloser, exceptions []except, err error) {
 	group := r.group[g]
 
@@ -198,12 +198,15 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 		}
 
 		if numExceptions > 0 {
-			return nil, nil, errors.New("TODO handle exceptions")
+			exceptions = make([]except, numExceptions)
+			if err = binary.Read(tr, binary.BigEndian, exceptions); err != nil {
+				return nil, nil, err
+			}
 		}
 
 		// No compression, data starts on the next 4 byte boundary
 		if !group.compressed() {
-			if _, err = io.CopyN(io.Discard, rc, (group.offset()+int64(wc.Count()))%4); err != nil {
+			if _, err = io.CopyN(io.Discard, rc, (4-(group.offset()+int64(wc.Count()))%4)%4); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -216,7 +219,7 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 		}
 	}
 
-	return rc, nil, nil
+	return rc, exceptions, nil
 }
 
 func (r *reader) nextReader() (err error) {

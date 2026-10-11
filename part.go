@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha1" //nolint:gosec
+	"errors"
 	"io"
 	"runtime"
 
@@ -48,6 +49,9 @@ type partReader struct {
 
 	cluster [clusters]*bytes.Buffer
 
+	// Hash exceptions for each chunk in the current group
+	exceptions [clusters][]except
+
 	buf []byte
 	br  *bytes.Reader
 
@@ -75,6 +79,8 @@ func (pr *partReader) readGroup(i int) error {
 
 	h := sha1.New() //nolint:gosec
 
+	pr.exceptions[i] = nil
+
 	split := min(ss+pr.r.disc.sectorsPerChunk(), int(pr.r.part[pr.p].Data[pr.d].NumSector)-pr.sector)
 	if split < ss {
 		split = ss
@@ -88,7 +94,7 @@ func (pr *partReader) readGroup(i int) error {
 	)
 
 	if split > ss {
-		rc, _, err = pr.r.groupReader(g, pr.groupOffset(g), true)
+		rc, pr.exceptions[i], err = pr.r.groupReader(g, pr.groupOffset(g), true)
 		if err != nil {
 			return err
 		}
@@ -146,6 +152,28 @@ func (pr *partReader) writeHashes() {
 	_, _ = io.CopyN(pr.h2, plumbing.DevZero(), h2Padding)
 }
 
+// applyExceptions replaces any recalculated hashes that didn't match the
+// original disc. Exception offsets are relative to the hashes of the first
+// sector in each chunk.
+func (pr *partReader) applyExceptions() error {
+	for i, exceptions := range pr.exceptions {
+		base := i * pr.r.disc.sectorsPerChunk() * hashSize
+
+		for _, e := range exceptions {
+			offset := base + int(e.Offset)
+			sector, offset := offset/hashSize, offset%hashSize
+
+			if sector >= clusters || offset+sha1.Size > hashSize {
+				return errors.New("rvz: bad hash exception offset")
+			}
+
+			copy(pr.h0[sector].Bytes()[offset:], e.Hash[:])
+		}
+	}
+
+	return nil
+}
+
 //nolint:gochecknoglobals
 var iv = make([]byte, aes.BlockSize) // 16 x 0x00
 
@@ -190,6 +218,10 @@ func (pr *partReader) read() (err error) {
 	}
 
 	pr.writeHashes()
+
+	if err = pr.applyExceptions(); err != nil {
+		return
+	}
 
 	sectors := min(clusters, int(pr.r.part[pr.p].Data[pr.d].NumSector)-pr.sector)
 
