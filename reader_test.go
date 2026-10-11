@@ -66,7 +66,9 @@ func TestReader(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer f.Close()
+			defer func() {
+				_ = f.Close()
+			}()
 
 			r, err := rvz.NewReader(f)
 			if err != nil {
@@ -103,7 +105,9 @@ func benchmarkReader(file string) error {
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", file, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	r, err := rvz.NewReader(f)
 	if err != nil {

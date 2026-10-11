@@ -25,12 +25,6 @@ type readCloser struct {
 	buf  *bytes.Buffer
 }
 
-func (rc *readCloser) advance() {
-	for i := range rc.prng {
-		rc.prng[i] ^= rc.prng[(i+len(rc.prng)-32)%len(rc.prng)]
-	}
-}
-
 func (rc *readCloser) Read(p []byte) (int, error) {
 	if rc.buf.Len() == 0 {
 		for _, x := range rc.prng {
@@ -52,6 +46,12 @@ func (rc *readCloser) Close() error {
 	bufPool.Put(rc.buf)
 
 	return nil
+}
+
+func (rc *readCloser) advance() {
+	for i := range rc.prng {
+		rc.prng[i] ^= rc.prng[(i+len(rc.prng)-32)%len(rc.prng)]
+	}
 }
 
 // NewReadCloser returns an io.ReadCloser that generates a stream of GameCube

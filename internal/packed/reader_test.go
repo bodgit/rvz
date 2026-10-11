@@ -40,7 +40,9 @@ func stream(t *testing.T, offset int64) ([]byte, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pr.Close()
+	defer func() {
+		_ = pr.Close()
+	}()
 
 	pad := make([]byte, paddedSize)
 	if _, err := io.ReadFull(pr, pad); err != nil {

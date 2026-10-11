@@ -170,99 +170,6 @@ type reader struct {
 	offset int64
 }
 
-func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
-	dcomp := decompressor(r.disc.Compression)
-	if dcomp == nil {
-		return nil, errUnsupportedAlgorithm
-	}
-
-	return dcomp(r.disc.ComprData[0:r.disc.ComprDataLen], reader)
-}
-
-//nolint:cyclop
-func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadCloser, exceptions []except, err error) {
-	group := r.group[g]
-
-	// An empty group is all zeroes with no exceptions or packing
-	if group.size() == 0 {
-		return io.NopCloser(io.LimitReader(plumbing.DevZero(), r.disc.chunkSize(partition))), nil, nil
-	}
-
-	if group.compressed() {
-		rc, err = r.decompressor(io.NewSectionReader(r.ra, group.offset(), group.size()))
-		if err != nil {
-			return nil, nil, err
-		}
-	} else {
-		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
-	}
-
-	// Error returns set rc to nil, so keep hold of it to close
-	src := rc
-
-	defer func() {
-		if err != nil {
-			_ = src.Close()
-		}
-	}()
-
-	//nolint:nestif
-	if partition {
-		wc := new(plumbing.WriteCounter)
-		tr := io.TeeReader(rc, wc)
-
-		var numExceptions uint16
-		if err = binary.Read(tr, binary.BigEndian, &numExceptions); err != nil {
-			return nil, nil, fmt.Errorf("rvz: reading hash exceptions: %w", err)
-		}
-
-		if numExceptions > 0 {
-			exceptions = make([]except, numExceptions)
-			if err = binary.Read(tr, binary.BigEndian, exceptions); err != nil {
-				return nil, nil, fmt.Errorf("rvz: reading hash exceptions: %w", err)
-			}
-		}
-
-		// No compression, data starts on the next 4 byte boundary
-		if !group.compressed() {
-			// The count is at most a few hundred KiB so can't overflow
-			count := int64(wc.Count()) //nolint:gosec
-
-			if _, err = io.CopyN(io.Discard, rc, (4-(group.offset()+count)%4)%4); err != nil {
-				return nil, nil, fmt.Errorf("rvz: skipping hash exception padding: %w", err)
-			}
-		}
-	}
-
-	if group.PackedSize != 0 {
-		rc = packed.NewReadCloser(rc, offset)
-	}
-
-	return rc, exceptions, nil
-}
-
-func (r *reader) nextReader() error {
-	for i, x := range r.raw {
-		if r.offset == x.offset() && x.RawDataSize > 0 {
-			r.r = newRawReader(r, i)
-
-			return nil
-		}
-	}
-
-	for i, x := range r.part {
-		for j := range x.Data {
-			if r.offset == int64(x.Data[j].FirstSector)*util.SectorSize && x.Data[j].NumSector > 0 {
-				r.r = newPartReader(r, i, j)
-
-				return nil
-			}
-		}
-	}
-
-	return errNoReader
-}
-
 func (r *reader) Read(p []byte) (int, error) {
 	if r.offset == r.header.isoFileSize() {
 		return 0, io.EOF
@@ -289,12 +196,118 @@ func (r *reader) Size() int64 {
 	return r.header.isoFileSize()
 }
 
+func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
+	dcomp := decompressor(r.disc.Compression)
+	if dcomp == nil {
+		return nil, errUnsupportedAlgorithm
+	}
+
+	return dcomp(r.disc.ComprData[0:r.disc.ComprDataLen], reader)
+}
+
+func (r *reader) groupReader(g int, offset int64, partition bool) (io.ReadCloser, []except, error) {
+	group := r.group[g]
+
+	// An empty group is all zeroes with no exceptions or packing
+	if group.size() == 0 {
+		return io.NopCloser(io.LimitReader(plumbing.DevZero(), r.disc.chunkSize(partition))), nil, nil
+	}
+
+	var rc io.ReadCloser
+
+	if group.compressed() {
+		var err error
+
+		rc, err = r.decompressor(io.NewSectionReader(r.ra, group.offset(), group.size()))
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
+	}
+
+	var exceptions []except
+
+	if partition {
+		var err error
+
+		if exceptions, err = readExceptions(rc, &group); err != nil {
+			_ = rc.Close()
+
+			return nil, nil, err
+		}
+	}
+
+	if group.PackedSize != 0 {
+		rc = packed.NewReadCloser(rc, offset)
+	}
+
+	return rc, exceptions, nil
+}
+
+// readExceptions reads the hash exceptions at the start of a group of
+// partition data, leaving r at the start of the data itself.
+func readExceptions(r io.Reader, group *group) ([]except, error) {
+	wc := new(plumbing.WriteCounter)
+	tr := io.TeeReader(r, wc)
+
+	var numExceptions uint16
+	if err := binary.Read(tr, binary.BigEndian, &numExceptions); err != nil {
+		return nil, fmt.Errorf("rvz: reading hash exceptions: %w", err)
+	}
+
+	var exceptions []except
+
+	if numExceptions > 0 {
+		exceptions = make([]except, numExceptions)
+		if err := binary.Read(tr, binary.BigEndian, exceptions); err != nil {
+			return nil, fmt.Errorf("rvz: reading hash exceptions: %w", err)
+		}
+	}
+
+	// No compression, data starts on the next 4 byte boundary
+	if !group.compressed() {
+		// The count is at most a few hundred KiB so can't overflow
+		count := int64(wc.Count()) //nolint:gosec
+
+		if _, err := io.CopyN(io.Discard, r, (4-(group.offset()+count)%4)%4); err != nil {
+			return nil, fmt.Errorf("rvz: skipping hash exception padding: %w", err)
+		}
+	}
+
+	return exceptions, nil
+}
+
+func (r *reader) nextReader() error {
+	for i, x := range r.raw {
+		if r.offset == x.offset() && x.RawDataSize > 0 {
+			r.r = newRawReader(r, i)
+
+			return nil
+		}
+	}
+
+	for i, x := range r.part {
+		for j := range x.Data {
+			if r.offset == int64(x.Data[j].FirstSector)*util.SectorSize && x.Data[j].NumSector > 0 {
+				r.r = newPartReader(r, i, j)
+
+				return nil
+			}
+		}
+	}
+
+	return errNoReader
+}
+
 func (r *reader) readRaw() error {
 	cr, err := r.decompressor(r.disc.rawReader(r.ra))
 	if err != nil {
 		return err
 	}
-	defer cr.Close()
+	defer func() {
+		_ = cr.Close()
+	}()
 
 	r.raw = make([]raw, r.disc.NumRawData)
 	if err = binary.Read(cr, binary.BigEndian, &r.raw); err != nil {
@@ -317,7 +330,9 @@ func (r *reader) readGroup() error {
 	if err != nil {
 		return err
 	}
-	defer cr.Close()
+	defer func() {
+		_ = cr.Close()
+	}()
 
 	r.group = make([]group, r.disc.NumGroup)
 	if err = binary.Read(cr, binary.BigEndian, &r.group); err != nil {

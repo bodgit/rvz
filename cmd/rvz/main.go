@@ -49,11 +49,18 @@ func decompress(c *cli.Context) error {
 		dst = strings.TrimSuffix(src, rvz.Extension) + isoExtension
 	}
 
+	return decompressFile(src, dst, c.Bool("verbose"))
+}
+
+func decompressFile(src, dst string, verbose bool) (err error) {
 	f, err := os.Open(src) //nolint:gosec // the user chooses which file to read
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
-	defer f.Close()
+
+	defer func() {
+		_ = f.Close()
+	}()
 
 	r, err := rvz.NewReader(f)
 	if err != nil {
@@ -67,12 +74,17 @@ func decompress(c *cli.Context) error {
 		return fmt.Errorf("creating target: %w", err)
 	}
 
-	if c.Bool("verbose") {
+	if verbose {
 		pb := progressbar.DefaultBytes(r.Size())
 		w = plumbing.MultiWriteCloser(w, plumbing.NopWriteCloser(pb))
 	}
 
-	defer w.Close()
+	// A failure to close the target may mean it's incomplete
+	defer func() {
+		if cerr := w.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing target: %w", cerr)
+		}
+	}()
 
 	if _, err = io.Copy(w, r); err != nil {
 		return fmt.Errorf("decompressing %s: %w", src, err)

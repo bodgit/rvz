@@ -54,6 +54,27 @@ type partReader struct {
 	block cipher.Block
 }
 
+func (pr *partReader) Read(p []byte) (int, error) {
+	if pr.br.Len() == 0 {
+		if pr.sector == int(pr.r.part[pr.p].Data[pr.d].NumSector) {
+			return 0, io.EOF
+		}
+
+		if err := pr.read(); err != nil {
+			return 0, err
+		}
+
+		pr.br.Reset(pr.buf)
+
+		pr.sector += pr.br.Len() / util.SectorSize
+	}
+
+	// The reader was refilled above so this can't fail
+	n, _ := pr.br.Read(p)
+
+	return n, nil
+}
+
 func (pr *partReader) groupOffset(g int) int64 {
 	return (int64(g) - int64(pr.r.part[pr.p].Data[pr.d].GroupIndex)) * pr.r.disc.chunkSize(true)
 }
@@ -87,7 +108,9 @@ func (pr *partReader) readGroup(i int) error {
 		if err != nil {
 			return err
 		}
-		defer rc.Close()
+		defer func() {
+			_ = rc.Close()
+		}()
 	}
 
 	for j := ss; j < ss+pr.r.disc.sectorsPerChunk(); j++ {
@@ -228,27 +251,6 @@ func (pr *partReader) read() error {
 	_ = eg.Wait()
 
 	return nil
-}
-
-func (pr *partReader) Read(p []byte) (int, error) {
-	if pr.br.Len() == 0 {
-		if pr.sector == int(pr.r.part[pr.p].Data[pr.d].NumSector) {
-			return 0, io.EOF
-		}
-
-		if err := pr.read(); err != nil {
-			return 0, err
-		}
-
-		pr.br.Reset(pr.buf)
-
-		pr.sector += pr.br.Len() / util.SectorSize
-	}
-
-	// The reader was refilled above so this can't fail
-	n, _ := pr.br.Read(p)
-
-	return n, nil
 }
 
 func newPartReader(r *reader, p, d int) io.Reader {

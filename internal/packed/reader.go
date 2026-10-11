@@ -24,49 +24,6 @@ type readCloser struct {
 	offset int64
 }
 
-func (rc *readCloser) nextReader() (err error) {
-	var size uint32
-	if err = binary.Read(rc.rc, binary.BigEndian, &size); err != nil {
-		// A clean end of the stream must be returned as is
-		if errors.Is(err, io.EOF) {
-			return io.EOF
-		}
-
-		return fmt.Errorf("packed: reading entry size: %w", err)
-	}
-
-	rc.size = int64(size & sizeMask)
-
-	if size&padded == padded {
-		nrc, err := padding.NewReadCloser(rc.rc, rc.offset)
-		if err != nil {
-			return fmt.Errorf("packed: %w", err)
-		}
-
-		rc.src = plumbing.LimitReadCloser(nrc, rc.size)
-	} else {
-		// Intentionally "hide" the underlying Close method
-		rc.src = io.NopCloser(io.LimitReader(rc.rc, rc.size))
-	}
-
-	if rc.size == 0 {
-		return rc.closeSrc()
-	}
-
-	return nil
-}
-
-func (rc *readCloser) closeSrc() error {
-	err := rc.src.Close()
-	rc.src = nil
-
-	if err != nil {
-		return fmt.Errorf("packed: closing entry: %w", err)
-	}
-
-	return nil
-}
-
 func (rc *readCloser) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -113,6 +70,49 @@ func (rc *readCloser) Close() error {
 
 	if err := rc.rc.Close(); err != nil {
 		return fmt.Errorf("packed: %w", err)
+	}
+
+	return nil
+}
+
+func (rc *readCloser) nextReader() error {
+	var size uint32
+	if err := binary.Read(rc.rc, binary.BigEndian, &size); err != nil {
+		// A clean end of the stream must be returned as is
+		if errors.Is(err, io.EOF) {
+			return io.EOF
+		}
+
+		return fmt.Errorf("packed: reading entry size: %w", err)
+	}
+
+	rc.size = int64(size & sizeMask)
+
+	if size&padded == padded {
+		nrc, err := padding.NewReadCloser(rc.rc, rc.offset)
+		if err != nil {
+			return fmt.Errorf("packed: %w", err)
+		}
+
+		rc.src = plumbing.LimitReadCloser(nrc, rc.size)
+	} else {
+		// Intentionally "hide" the underlying Close method
+		rc.src = io.NopCloser(io.LimitReader(rc.rc, rc.size))
+	}
+
+	if rc.size == 0 {
+		return rc.closeSrc()
+	}
+
+	return nil
+}
+
+func (rc *readCloser) closeSrc() error {
+	err := rc.src.Close()
+	rc.src = nil
+
+	if err != nil {
+		return fmt.Errorf("packed: closing entry: %w", err)
 	}
 
 	return nil
