@@ -49,7 +49,7 @@ func decompress(c *cli.Context) error {
 		dst = strings.TrimSuffix(src, rvz.Extension) + isoExtension
 	}
 
-	f, err := os.Open(src)
+	f, err := os.Open(src) //nolint:gosec // the user chooses which file to read
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
@@ -62,7 +62,7 @@ func decompress(c *cli.Context) error {
 
 	var w io.WriteCloser
 
-	w, err = os.Create(dst)
+	w, err = os.Create(dst) //nolint:gosec // the user chooses which file to write
 	if err != nil {
 		return fmt.Errorf("creating target: %w", err)
 	}

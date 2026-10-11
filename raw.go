@@ -16,7 +16,7 @@ type rawReader struct {
 }
 
 func (rr *rawReader) Read(p []byte) (int, error) {
-	end := int64(rr.r.raw[rr.i].RawDataOff + rr.r.raw[rr.i].RawDataSize)
+	end := rr.r.raw[rr.i].end()
 	if rr.offset == end {
 		return 0, io.EOF
 	}
@@ -57,6 +57,6 @@ func newRawReader(r *reader, i int) io.Reader {
 		i:      i,
 		g:      int(r.raw[i].GroupIndex),
 		r:      r,
-		offset: int64(r.raw[i].RawDataOff),
+		offset: r.raw[i].offset(),
 	}
 }

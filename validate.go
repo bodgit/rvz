@@ -1,6 +1,10 @@
 package rvz
 
-import "github.com/bodgit/rvz/internal/util"
+import (
+	"math"
+
+	"github.com/bodgit/rvz/internal/util"
+)
 
 const (
 	rvzVersion               uint32 = 0x01000000
@@ -29,6 +33,10 @@ func (h *header) validate() error {
 // validate checks the fields that determine how much is allocated for the
 // partition, raw data and group tables before any of them are read.
 func (d *disc) validate(h *header) error {
+	if d.PartOff > math.MaxInt64 || d.RawDataOff > math.MaxInt64 || d.GroupOff > math.MaxInt64 {
+		return errBadTableOffset
+	}
+
 	if int(d.ComprDataLen) > len(d.ComprData) {
 		return errBadComprDataLen
 	}
@@ -63,7 +71,7 @@ func (pd *partData) validate(h *header, d *disc) error {
 	}
 
 	if uint64(pd.GroupIndex)+uint64(pd.NumGroup) > uint64(d.NumGroup) ||
-		ceilDiv(uint64(pd.NumSector), uint64(d.sectorsPerChunk())) > uint64(pd.NumGroup) {
+		ceilDiv(uint64(pd.NumSector), uint64(d.ChunkSize)/util.SectorSize) > uint64(pd.NumGroup) {
 		return errBadPartDataGroups
 	}
 

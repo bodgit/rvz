@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	padded   = 1 << 31
-	seedSize = 17 * 4
+	padded     = 1 << 31
+	seedSize   = 17 * 4
+	plainSize  = 1000
+	paddedSize = 5000
 )
 
 func seed() []byte {
@@ -32,10 +34,9 @@ func seed() []byte {
 func stream(t *testing.T, offset int64) ([]byte, []byte) {
 	t.Helper()
 
-	plain := bytes.Repeat([]byte{0xaa}, 1000)
-	paddedSize := int64(5000)
+	plain := bytes.Repeat([]byte{0xaa}, plainSize)
 
-	pr, err := padding.NewReadCloser(bytes.NewReader(seed()), offset+int64(len(plain)))
+	pr, err := padding.NewReadCloser(bytes.NewReader(seed()), offset+plainSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func stream(t *testing.T, offset int64) ([]byte, []byte) {
 	}
 
 	b := new(bytes.Buffer)
-	_ = binary.Write(b, binary.BigEndian, uint32(len(plain)))
+	_ = binary.Write(b, binary.BigEndian, uint32(plainSize))
 	b.Write(plain)
 	_ = binary.Write(b, binary.BigEndian, uint32(0))
 	_ = binary.Write(b, binary.BigEndian, uint32(padded|paddedSize))

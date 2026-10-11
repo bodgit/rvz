@@ -10,6 +10,7 @@ var (
 	errBadMagic              = errors.New("rvz: bad magic")
 	errBadPartDataGroups     = errors.New("rvz: bad partition data groups")
 	errBadRawDataGroups      = errors.New("rvz: bad raw data groups")
+	errBadTableOffset        = errors.New("rvz: bad table offset")
 	errDiscHash              = errors.New("rvz: disc hash doesn't match")
 	errDiscStructSize        = errors.New("rvz: disc struct has wrong size")
 	errHeaderHash            = errors.New("rvz: header hash doesn't match")

@@ -1,6 +1,7 @@
 package rvz
 
 import (
+	"math"
 	"testing"
 
 	"github.com/bodgit/rvz/internal/util"
@@ -105,6 +106,13 @@ func TestDiscValidate(t *testing.T) {
 			name: "compressor data length too long",
 			modify: func(d *disc) {
 				d.ComprDataLen = byte(len(d.ComprData)) + 1
+			},
+			err: true,
+		},
+		{
+			name: "table offset too large",
+			modify: func(d *disc) {
+				d.GroupOff = math.MaxInt64 + 1
 			},
 			err: true,
 		},

@@ -99,7 +99,7 @@ func TestReader(t *testing.T) {
 }
 
 func benchmarkReader(file string) error {
-	f, err := os.Open(filepath.Join("testdata", file))
+	f, err := os.Open(filepath.Join("testdata", file)) //nolint:gosec // only test data is read
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", file, err)
 	}

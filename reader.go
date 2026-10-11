@@ -46,6 +46,11 @@ type header struct {
 	FileHeadHash      [sha1.Size]byte
 }
 
+// isoFileSize returns the size of the disc, which validate limits.
+func (h *header) isoFileSize() int64 {
+	return int64(h.IsoFileSize) //nolint:gosec // validate limits it to maxIsoFileSize
+}
+
 func (h *header) discReader(ra io.ReaderAt) io.Reader {
 	return io.NewSectionReader(ra, int64(binary.Size(h)), int64(h.DiscSize))
 }
@@ -71,15 +76,15 @@ type disc struct {
 }
 
 func (d *disc) partReader(ra io.ReaderAt) io.Reader {
-	return io.NewSectionReader(ra, int64(d.PartOff), int64(d.NumPart)*int64(d.PartSize))
+	return io.NewSectionReader(ra, int64(d.PartOff), int64(d.NumPart)*int64(d.PartSize)) //nolint:gosec // see validate
 }
 
 func (d *disc) rawReader(ra io.ReaderAt) io.Reader {
-	return io.NewSectionReader(ra, int64(d.RawDataOff), int64(d.RawDataSize))
+	return io.NewSectionReader(ra, int64(d.RawDataOff), int64(d.RawDataSize)) //nolint:gosec // see validate
 }
 
 func (d *disc) groupReader(ra io.ReaderAt) io.Reader {
-	return io.NewSectionReader(ra, int64(d.GroupOff), int64(d.GroupSize))
+	return io.NewSectionReader(ra, int64(d.GroupOff), int64(d.GroupSize)) //nolint:gosec // see validate
 }
 
 func (d *disc) chunkSize(partition bool) int64 {
@@ -111,6 +116,17 @@ type raw struct {
 	RawDataSize uint64
 	GroupIndex  uint32
 	NumGroup    uint32
+}
+
+// offset returns the offset of the raw data on the disc. validateEntries
+// checks the area lies within the disc so it can't overflow.
+func (x *raw) offset() int64 {
+	return int64(x.RawDataOff) //nolint:gosec // see validateEntries
+}
+
+// end returns the offset of the end of the raw data on the disc.
+func (x *raw) end() int64 {
+	return int64(x.RawDataOff + x.RawDataSize) //nolint:gosec // see validateEntries
 }
 
 type group struct {
@@ -209,7 +225,10 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 
 		// No compression, data starts on the next 4 byte boundary
 		if !group.compressed() {
-			if _, err = io.CopyN(io.Discard, rc, (4-(group.offset()+int64(wc.Count()))%4)%4); err != nil {
+			// The count is at most a few hundred KiB so can't overflow
+			count := int64(wc.Count()) //nolint:gosec
+
+			if _, err = io.CopyN(io.Discard, rc, (4-(group.offset()+count)%4)%4); err != nil {
 				return nil, nil, fmt.Errorf("rvz: skipping hash exception padding: %w", err)
 			}
 		}
@@ -224,7 +243,7 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 
 func (r *reader) nextReader() error {
 	for i, x := range r.raw {
-		if r.offset == int64(x.RawDataOff) && x.RawDataSize > 0 {
+		if r.offset == x.offset() && x.RawDataSize > 0 {
 			r.r = newRawReader(r, i)
 
 			return nil
@@ -245,7 +264,7 @@ func (r *reader) nextReader() error {
 }
 
 func (r *reader) Read(p []byte) (int, error) {
-	if r.offset == int64(r.header.IsoFileSize) {
+	if r.offset == r.header.isoFileSize() {
 		return 0, io.EOF
 	}
 
@@ -267,7 +286,7 @@ func (r *reader) Read(p []byte) (int, error) {
 }
 
 func (r *reader) Size() int64 {
-	return int64(r.header.IsoFileSize)
+	return r.header.isoFileSize()
 }
 
 func (r *reader) readRaw() error {
