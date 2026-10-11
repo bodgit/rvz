@@ -34,7 +34,6 @@ type Reader interface {
 	Size() int64
 }
 
-//nolint:maligned
 type header struct {
 	Magic             uint32
 	Version           uint32

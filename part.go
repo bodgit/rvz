@@ -192,7 +192,9 @@ var iv = make([]byte, aes.BlockSize) // 16 x 0x00
 func (pr *partReader) encryptSector(sector int) {
 	offset := sector * util.SectorSize
 
-	e := cipher.NewCBCEncrypter(pr.block, iv)
+	// The disc format encrypts the hash block with an all-zero IV, and the
+	// data with an IV taken from the encrypted hash block
+	e := cipher.NewCBCEncrypter(pr.block, iv) //nolint:gosec // required by the disc format
 	e.CryptBlocks(pr.buf[offset:], pr.h0[sector].Bytes())
 
 	e = cipher.NewCBCEncrypter(pr.block, pr.buf[offset+ivOffset:offset+ivOffset+aes.BlockSize])
