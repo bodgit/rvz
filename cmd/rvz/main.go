@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +14,7 @@ import (
 	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz"
 	"github.com/schollz/progressbar/v3"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
 const isoExtension = ".iso"
@@ -29,18 +30,20 @@ var (
 //nolint:gochecknoinits
 func init() {
 	cli.VersionFlag = &cli.BoolFlag{
-		Name:    "version",
-		Aliases: []string{"V"},
-		Usage:   "print the version",
+		Name:        "version",
+		Aliases:     []string{"V"},
+		Usage:       "print the version",
+		HideDefault: true,
+		Local:       true,
 	}
 }
 
-func decompress(c *cli.Context) error {
-	if c.NArg() < 1 {
-		cli.ShowCommandHelpAndExit(c, c.Command.FullName(), 1)
+func decompress(ctx context.Context, cmd *cli.Command) error {
+	if cmd.NArg() < 1 {
+		cli.ShowCommandHelpAndExit(ctx, cmd.Root(), cmd.Name, 1)
 	}
 
-	src, dst := c.Args().Get(0), c.Args().Get(1)
+	src, dst := cmd.Args().Get(0), cmd.Args().Get(1)
 	if dst == "" {
 		if ext := filepath.Ext(src); ext == isoExtension {
 			return fmt.Errorf("%w: %s", errISOExtension, src)
@@ -49,7 +52,7 @@ func decompress(c *cli.Context) error {
 		dst = strings.TrimSuffix(src, rvz.Extension) + isoExtension
 	}
 
-	return decompressFile(src, dst, c.Bool("verbose"))
+	return decompressFile(src, dst, cmd.Bool("verbose"))
 }
 
 func decompressFile(src, dst string, verbose bool) (err error) {
@@ -94,30 +97,29 @@ func decompressFile(src, dst string, verbose bool) (err error) {
 }
 
 func main() {
-	app := cli.NewApp()
-
-	app.Name = "rvz"
-	app.Usage = "RVZ utility"
-	app.Version = fmt.Sprintf("%s, commit %s, built at %s", version, commit, date)
-
-	app.Commands = []*cli.Command{
-		{
-			Name:        "decompress",
-			Usage:       "Decompress RVZ image",
-			Description: "Decompress RVZ image",
-			ArgsUsage:   "SOURCE [TARGET]",
-			Flags: []cli.Flag{
-				&cli.BoolFlag{
-					Name:    "verbose",
-					Aliases: []string{"v"},
-					Usage:   "increase verbosity",
+	cmd := &cli.Command{
+		Name:    "rvz",
+		Usage:   "RVZ utility",
+		Version: fmt.Sprintf("%s, commit %s, built at %s", version, commit, date),
+		Commands: []*cli.Command{
+			{
+				Name:        "decompress",
+				Usage:       "Decompress RVZ image",
+				Description: "Decompress RVZ image",
+				ArgsUsage:   "SOURCE [TARGET]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "verbose",
+						Aliases: []string{"v"},
+						Usage:   "increase verbosity",
+					},
 				},
+				Action: decompress,
 			},
-			Action: decompress,
 		},
 	}
 
-	if err := app.Run(os.Args); err != nil {
+	if err := cmd.Run(context.Background(), os.Args); err != nil {
 		log.Fatal(err)
 	}
 }
