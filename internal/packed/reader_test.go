@@ -80,10 +80,7 @@ func TestReadCloser(t *testing.T) {
 			offset := int64(0x12345)
 			in, want := stream(t, offset)
 
-			rc, err := packed.NewReadCloser(io.NopCloser(bytes.NewReader(in)), offset)
-			if err != nil {
-				t.Fatal(err)
-			}
+			rc := packed.NewReadCloser(io.NopCloser(bytes.NewReader(in)), offset)
 
 			got, err := io.ReadAll(table.wrap(rc))
 			if err != nil {
@@ -102,11 +99,8 @@ func TestReadCloserTruncated(t *testing.T) {
 	in, _ := stream(t, 0)
 
 	// Cut the stream part way through the plain entry
-	rc, err := packed.NewReadCloser(io.NopCloser(bytes.NewReader(in[:500])), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rc := packed.NewReadCloser(io.NopCloser(bytes.NewReader(in[:500])), 0)
 
-	_, err = io.ReadAll(rc)
+	_, err := io.ReadAll(rc)
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }

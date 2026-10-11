@@ -5,6 +5,7 @@ package packed
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/bodgit/plumbing"
@@ -26,7 +27,12 @@ type readCloser struct {
 func (rc *readCloser) nextReader() (err error) {
 	var size uint32
 	if err = binary.Read(rc.rc, binary.BigEndian, &size); err != nil {
-		return err
+		// A clean end of the stream must be returned as is
+		if errors.Is(err, io.EOF) {
+			return io.EOF
+		}
+
+		return fmt.Errorf("packed: reading entry size: %w", err)
 	}
 
 	rc.size = int64(size & sizeMask)
@@ -34,7 +40,7 @@ func (rc *readCloser) nextReader() (err error) {
 	if size&padded == padded {
 		nrc, err := padding.NewReadCloser(rc.rc, rc.offset)
 		if err != nil {
-			return err
+			return fmt.Errorf("packed: %w", err)
 		}
 
 		rc.src = plumbing.LimitReadCloser(nrc, rc.size)
@@ -54,7 +60,11 @@ func (rc *readCloser) closeSrc() error {
 	err := rc.src.Close()
 	rc.src = nil
 
-	return err
+	if err != nil {
+		return fmt.Errorf("packed: closing entry: %w", err)
+	}
+
+	return nil
 }
 
 //nolint:nakedret
@@ -102,16 +112,20 @@ func (rc *readCloser) Close() (err error) {
 		}
 	}
 
-	return rc.rc.Close()
+	if err = rc.rc.Close(); err != nil {
+		return fmt.Errorf("packed: %w", err)
+	}
+
+	return nil
 }
 
 // NewReadCloser returns a new io.ReadCloser that reads the RVZ packed stream
 // from the underlying io.ReadCloser rc. The offset of where this packed stream
 // starts relative to the beginning of the uncompressed disc image is also
 // required.
-func NewReadCloser(rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
+func NewReadCloser(rc io.ReadCloser, offset int64) io.ReadCloser {
 	return &readCloser{
 		rc:     rc,
 		offset: offset,
-	}, nil
+	}
 }

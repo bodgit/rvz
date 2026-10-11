@@ -4,6 +4,7 @@ package lzma
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 
 	"github.com/ulikunitz/xz/lzma"
@@ -20,7 +21,7 @@ func NewReader(p []byte, reader io.Reader) (io.ReadCloser, error) {
 
 	r, err := lzma.NewReader(io.MultiReader(b, reader))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lzma: %w", err)
 	}
 
 	return io.NopCloser(r), nil

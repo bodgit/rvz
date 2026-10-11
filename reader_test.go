@@ -3,7 +3,6 @@ package rvz_test
 import (
 	"crypto/sha1" //nolint:gosec
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -91,7 +90,7 @@ func TestReader(t *testing.T) {
 			}
 
 			if g == nil || g.ROM[0].Name != table.file+".iso" {
-				t.Fatal(errors.New("no such disc"))
+				t.Fatal("no such disc")
 			}
 
 			assert.Equal(t, fmt.Sprintf("%02x", h.Sum(nil)), strings.ToLower(g.ROM[0].SHA1))
@@ -102,17 +101,17 @@ func TestReader(t *testing.T) {
 func benchmarkReader(file string) error {
 	f, err := os.Open(filepath.Join("testdata", file))
 	if err != nil {
-		return err
+		return fmt.Errorf("opening %s: %w", file, err)
 	}
 	defer f.Close()
 
 	r, err := rvz.NewReader(f)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading %s: %w", file, err)
 	}
 
 	if _, err := io.Copy(io.Discard, r); err != nil {
-		return err
+		return fmt.Errorf("decompressing %s: %w", file, err)
 	}
 
 	return nil

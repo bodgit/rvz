@@ -5,6 +5,7 @@ package padding
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"sync"
 
@@ -42,7 +43,8 @@ func (rc *readCloser) Read(p []byte) (int, error) {
 		rc.advance()
 	}
 
-	return rc.buf.Read(p)
+	// The buffer was refilled above so this can't fail
+	return copy(p, rc.buf.Next(len(p))), nil
 }
 
 func (rc *readCloser) Close() error {
@@ -68,7 +70,7 @@ func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
 	}
 
 	if err := binary.Read(r, binary.BigEndian, rc.prng); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("padding: reading seed: %w", err)
 	}
 
 	rc.prng = rc.prng[:maximumSize]
@@ -92,7 +94,7 @@ func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
 	}
 
 	if _, err := io.CopyN(io.Discard, rc, offset%util.SectorSize); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("padding: skipping to offset: %w", err)
 	}
 
 	return rc, nil

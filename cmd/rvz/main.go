@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,8 @@ import (
 )
 
 const isoExtension = ".iso"
+
+var errISOExtension = errors.New("source file already has " + isoExtension + " extension")
 
 var (
 	version = "dev"
@@ -40,7 +43,7 @@ func decompress(c *cli.Context) error {
 	src, dst := c.Args().Get(0), c.Args().Get(1)
 	if dst == "" {
 		if ext := filepath.Ext(src); ext == isoExtension {
-			return fmt.Errorf("source file %s already has %s extension", src, isoExtension)
+			return fmt.Errorf("%w: %s", errISOExtension, src)
 		}
 
 		dst = strings.TrimSuffix(src, rvz.Extension) + isoExtension
@@ -48,20 +51,20 @@ func decompress(c *cli.Context) error {
 
 	f, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening source: %w", err)
 	}
 	defer f.Close()
 
 	r, err := rvz.NewReader(f)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading %s: %w", src, err)
 	}
 
 	var w io.WriteCloser
 
 	w, err = os.Create(dst)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating target: %w", err)
 	}
 
 	if c.Bool("verbose") {
@@ -71,9 +74,11 @@ func decompress(c *cli.Context) error {
 
 	defer w.Close()
 
-	_, err = io.Copy(w, r)
+	if _, err = io.Copy(w, r); err != nil {
+		return fmt.Errorf("decompressing %s: %w", src, err)
+	}
 
-	return err
+	return nil
 }
 
 func main() {

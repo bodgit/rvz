@@ -5,7 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha1" //nolint:gosec
-	"errors"
+	"fmt"
 	"io"
 	"runtime"
 
@@ -101,7 +101,7 @@ func (pr *partReader) readGroup(i int) error {
 			h.Reset()
 
 			if _, err := io.CopyN(pr.cluster[j], io.TeeReader(r, h), blockSize); err != nil {
-				return err
+				return fmt.Errorf("rvz: reading partition data: %w", err)
 			}
 
 			_, _ = pr.h0[j].Write(h.Sum(nil))
@@ -153,7 +153,7 @@ func (pr *partReader) applyExceptions() error {
 			sector, offset := offset/hashSize, offset%hashSize
 
 			if sector >= clusters || offset+sha1.Size > hashSize {
-				return errors.New("rvz: bad hash exception offset")
+				return errBadExceptionOffset
 			}
 
 			copy(pr.h0[sector].Bytes()[offset:], e.Hash[:])

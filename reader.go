@@ -8,6 +8,7 @@ import (
 	"crypto/sha1" //nolint:gosec
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/bodgit/plumbing"
@@ -156,7 +157,7 @@ type reader struct {
 func (r *reader) decompressor(reader io.Reader) (io.ReadCloser, error) {
 	dcomp := decompressor(r.disc.Compression)
 	if dcomp == nil {
-		return nil, errors.New("rvz: unsupported algorithm")
+		return nil, errUnsupportedAlgorithm
 	}
 
 	return dcomp(r.disc.ComprData[0:r.disc.ComprDataLen], reader)
@@ -196,29 +197,26 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 
 		var numExceptions uint16
 		if err = binary.Read(tr, binary.BigEndian, &numExceptions); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("rvz: reading hash exceptions: %w", err)
 		}
 
 		if numExceptions > 0 {
 			exceptions = make([]except, numExceptions)
 			if err = binary.Read(tr, binary.BigEndian, exceptions); err != nil {
-				return nil, nil, err
+				return nil, nil, fmt.Errorf("rvz: reading hash exceptions: %w", err)
 			}
 		}
 
 		// No compression, data starts on the next 4 byte boundary
 		if !group.compressed() {
 			if _, err = io.CopyN(io.Discard, rc, (4-(group.offset()+int64(wc.Count()))%4)%4); err != nil {
-				return nil, nil, err
+				return nil, nil, fmt.Errorf("rvz: skipping hash exception padding: %w", err)
 			}
 		}
 	}
 
 	if group.PackedSize != 0 {
-		rc, err = packed.NewReadCloser(rc, offset)
-		if err != nil {
-			return nil, nil, err
-		}
+		rc = packed.NewReadCloser(rc, offset)
 	}
 
 	return rc, exceptions, nil
@@ -243,7 +241,7 @@ func (r *reader) nextReader() (err error) {
 		}
 	}
 
-	return errors.New("rvz: cannot find reader")
+	return errNoReader
 }
 
 func (r *reader) Read(p []byte) (n int, err error) {
@@ -284,7 +282,7 @@ func (r *reader) readRaw() error {
 
 	r.raw = make([]raw, r.disc.NumRawData)
 	if err = binary.Read(cr, binary.BigEndian, &r.raw); err != nil {
-		return err
+		return fmt.Errorf("rvz: reading raw data table: %w", err)
 	}
 
 	// Make sure every area starts on a sector boundary, which is mostly
@@ -306,8 +304,11 @@ func (r *reader) readGroup() error {
 	defer cr.Close()
 
 	r.group = make([]group, r.disc.NumGroup)
+	if err = binary.Read(cr, binary.BigEndian, &r.group); err != nil {
+		return fmt.Errorf("rvz: reading group table: %w", err)
+	}
 
-	return binary.Read(cr, binary.BigEndian, &r.group)
+	return nil
 }
 
 // NewReader returns a new io.Reader that reads and decompresses from ra.
@@ -324,15 +325,15 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 	// Create a reader that can read the whole struct, but the SHA1 hash at the end is excluded
 	mr := io.MultiReader(io.TeeReader(io.NewSectionReader(ra, 0, size), h), io.NewSectionReader(ra, size, sha1.Size))
 	if err := binary.Read(mr, binary.BigEndian, &r.header); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rvz: reading header: %w", err)
 	}
 
 	if r.header.Magic != rvzMagic {
-		return nil, errors.New("rvz: bad magic")
+		return nil, errBadMagic
 	}
 
 	if !bytes.Equal(r.header.FileHeadHash[:], h.Sum(nil)) {
-		return nil, errors.New("rvz: header hash doesn't match")
+		return nil, errHeaderHash
 	}
 
 	if err := r.header.validate(); err != nil {
@@ -342,15 +343,15 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 	h.Reset()
 
 	if int(r.header.DiscSize) != binary.Size(r.disc) {
-		return nil, errors.New("rvz: disc struct has wrong size")
+		return nil, errDiscStructSize
 	}
 
 	if err := binary.Read(io.TeeReader(r.header.discReader(ra), h), binary.BigEndian, &r.disc); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rvz: reading disc header: %w", err)
 	}
 
 	if !bytes.Equal(r.header.DiscHash[:], h.Sum(nil)) {
-		return nil, errors.New("rvz: disc hash doesn't match")
+		return nil, errDiscHash
 	}
 
 	switch r.disc.DiscType {
@@ -358,7 +359,7 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 	case wii:
 		break
 	default:
-		return nil, errors.New("rvz: invalid disc type")
+		return nil, errInvalidDiscType
 	}
 
 	switch r.disc.ChunkSize {
@@ -371,7 +372,7 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 	case util.SectorSize << 6: //   2 MiB
 		break
 	default:
-		return nil, errors.New("rvz: bad chunk size")
+		return nil, errBadChunkSize
 	}
 
 	if err := r.disc.validate(&r.header); err != nil {
@@ -383,16 +384,16 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 	if r.disc.NumPart > 0 {
 		r.part = make([]part, r.disc.NumPart)
 		if int(r.disc.PartSize) != binary.Size(r.part[0]) {
-			return nil, errors.New("rvz: part struct has wrong size")
+			return nil, errPartStructSize
 		}
 
 		if err := binary.Read(io.TeeReader(r.disc.partReader(ra), h), binary.BigEndian, &r.part); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("rvz: reading partition table: %w", err)
 		}
 	}
 
 	if !bytes.Equal(r.disc.PartHash[:], h.Sum(nil)) {
-		return nil, errors.New("rvz: partition hash doesn't match")
+		return nil, errPartHash
 	}
 
 	if err := r.readRaw(); err != nil {
