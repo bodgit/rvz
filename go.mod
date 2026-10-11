@@ -1,12 +1,12 @@
 module github.com/bodgit/rvz
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/bodgit/plumbing v1.3.0
 	github.com/bodgit/rom v0.0.1
 	github.com/klauspost/compress v1.20.1
-	github.com/schollz/progressbar/v3 v3.14.2
+	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/stretchr/testify v1.12.1
 	github.com/ulikunitz/xz v0.5.17
 	github.com/urfave/cli/v2 v2.27.7
@@ -33,7 +33,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go4.org v0.0.0-20201209231011-d4a079459e60 // indirect
 	golang.org/x/net v0.5.0 // indirect
-	golang.org/x/sys v0.17.0 // indirect
-	golang.org/x/term v0.17.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/term v0.44.0 // indirect
 	golang.org/x/text v0.6.0 // indirect
 )
