@@ -2,11 +2,13 @@ version: "2"
 linters:
   default: none
   enable:
+    - arangolint
     - asasalint
     - asciicheck
     - bidichk
     - bodyclose
     - canonicalheader
+    - clickhouselint
     - containedctx
     - contextcheck
     - copyloopvar
@@ -16,8 +18,9 @@ linters:
     - dupl
     - dupword
     - durationcheck
-    #- err113
-    #- errcheck
+    - embeddedstructfieldcheck
+    - err113
+    - errcheck
     - errchkjson
     - errname
     - errorlint
@@ -26,7 +29,7 @@ linters:
     - fatcontext
     - forbidigo
     - forcetypeassert
-    #- funcorder
+    - funcorder
     - funlen
     - ginkgolinter
     - gocheckcompilerdirectives
@@ -37,12 +40,14 @@ linters:
     - goconst
     - gocritic
     - gocyclo
+    - godoclint
     - godot
+    - godox
     - goheader
     - gomoddirectives
-    - gomodguard
+    - gomodguard_v2
     - goprintffuncname
-    #- gosec
+    - gosec
     - gosmopolitan
     - govet
     - grouper
@@ -52,12 +57,14 @@ linters:
     - ineffassign
     - interfacebloat
     - intrange
+    - iotamixing
     - lll
     - loggercheck
     - maintidx
     - makezero
     - mirror
     - misspell
+    - modernize
     - musttag
     - nakedret
     - nestif
@@ -67,16 +74,17 @@ linters:
     - nlreturn
     - noctx
     - nolintlint
+    - nonamedreturns
     - nosprintfhostport
     - paralleltest
     - perfsprint
     - prealloc
-    #- predeclared
+    - predeclared
     - promlinter
     - protogetter
     - reassign
     - recvcheck
-    #- revive
+    - revive
     - rowserrcheck
     - sloglint
     - spancheck
@@ -91,14 +99,20 @@ linters:
     - tparallel
     - unconvert
     - unparam
+    - unqueryvet
     - unused
     - usestdlibvars
     - usetesting
     - wastedassign
     - whitespace
-    #- wrapcheck
-    - wsl
+    - wrapcheck
+    - wsl_v5
     - zerologlint
+  settings:
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
   exclusions:
     generated: lax
     paths:
