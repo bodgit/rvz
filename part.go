@@ -34,14 +34,6 @@ const (
 	groupSize = util.SectorSize * clusters // 2 MiB
 )
 
-func min(x, y int) int {
-	if x < y {
-		return x
-	}
-
-	return y
-}
-
 type partReader struct {
 	h0 [clusters]*bytes.Buffer
 	h1 [subGroup]io.Writer
@@ -67,7 +59,7 @@ func (pr *partReader) groupOffset(g int) int64 {
 }
 
 func (pr *partReader) reset() {
-	for i := 0; i < clusters; i++ {
+	for i := range clusters {
 		pr.h0[i].Reset()
 		pr.cluster[i].Reset()
 	}
@@ -81,10 +73,7 @@ func (pr *partReader) readGroup(i int) error {
 
 	pr.exceptions[i] = nil
 
-	split := min(ss+pr.r.disc.sectorsPerChunk(), int(pr.r.part[pr.p].Data[pr.d].NumSector)-pr.sector)
-	if split < ss {
-		split = ss
-	}
+	split := max(min(ss+pr.r.disc.sectorsPerChunk(), int(pr.r.part[pr.p].Data[pr.d].NumSector)-pr.sector), ss)
 
 	var (
 		rc  io.ReadCloser
@@ -108,7 +97,7 @@ func (pr *partReader) readGroup(i int) error {
 			r = zr
 		}
 
-		for k := 0; k < blocksPerCluster; k++ {
+		for range blocksPerCluster {
 			h.Reset()
 
 			if _, err := io.CopyN(pr.cluster[j], io.TeeReader(r, h), blockSize); err != nil {
@@ -130,8 +119,8 @@ func (pr *partReader) writeHashes() {
 	buf := make([]byte, hashSize)
 
 	// Calculate the H1 hashes
-	for i := 0; i < subGroup; i++ {
-		for j := 0; j < subGroup; j++ {
+	for i := range subGroup {
+		for j := range subGroup {
 			h.Reset()
 			_, _ = io.CopyBuffer(h, io.LimitReader(bytes.NewReader(pr.h0[i*subGroup+j].Bytes()), h0Size), buf)
 			_, _ = pr.h1[i].Write(h.Sum(nil))
@@ -141,7 +130,7 @@ func (pr *partReader) writeHashes() {
 	}
 
 	// Calculate the H2 hashes
-	for i := 0; i < subGroup; i++ {
+	for i := range subGroup {
 		h.Reset()
 		_, _ = io.CopyBuffer(h,
 			io.NewSectionReader(bytes.NewReader(pr.h0[i*subGroup].Bytes()), h0Size+h0Padding, h1Size),
@@ -205,9 +194,7 @@ func (pr *partReader) read() (err error) {
 
 	pr.reset()
 
-	for i := 0; i < groupSize/int(pr.r.disc.ChunkSize); i++ {
-		i := i
-
+	for i := range groupSize / int(pr.r.disc.ChunkSize) {
 		eg.Go(func() error {
 			return pr.readGroup(i)
 		})
@@ -227,9 +214,7 @@ func (pr *partReader) read() (err error) {
 
 	pr.buf = pr.buf[:(sectors * util.SectorSize)]
 
-	for i := 0; i < sectors; i++ {
-		i := i
-
+	for i := range sectors {
 		eg.Go(func() error {
 			pr.encryptSector(i)
 

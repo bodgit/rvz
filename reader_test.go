@@ -50,8 +50,6 @@ func TestReader(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -121,7 +119,7 @@ func benchmarkReader(file string) error {
 }
 
 func BenchmarkReader(b *testing.B) {
-	for n := 0; n < b.N; n++ {
+	for b.Loop() {
 		if err := benchmarkReader("Metal Slug Anthology (USA).rvz"); err != nil {
 			b.Fatal(err)
 		}

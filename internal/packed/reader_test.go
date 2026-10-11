@@ -74,8 +74,6 @@ func TestReadCloser(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 

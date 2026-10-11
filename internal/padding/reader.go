@@ -1,3 +1,5 @@
+// Package padding generates the pseudorandom padding data found on
+// GameCube and Wii discs.
 package padding
 
 import (
@@ -85,7 +87,7 @@ func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
 		rc.prng[i] = rc.prng[i-17]<<23 ^ rc.prng[i-16]>>9 ^ rc.prng[i-1]
 	}
 
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		rc.advance()
 	}
 

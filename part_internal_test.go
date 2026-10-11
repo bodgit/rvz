@@ -158,8 +158,6 @@ func TestHashExceptions(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -178,7 +176,7 @@ func TestHashExceptions(t *testing.T) {
 
 			assert.Len(t, b, testSectors*util.SectorSize)
 
-			for s := 0; s < testSectors; s++ {
+			for s := range testSectors {
 				hashes, data := decryptSector(t, r.part[0].Key, b[s*util.SectorSize:(s+1)*util.SectorSize])
 
 				g := s / r.disc.sectorsPerChunk()

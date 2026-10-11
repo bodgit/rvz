@@ -1,3 +1,4 @@
+// Package lzma2 provides an LZMA2 decompressor for RVZ groups.
 package lzma2
 
 import (

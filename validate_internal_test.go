@@ -67,8 +67,6 @@ func TestHeaderValidate(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -147,8 +145,6 @@ func TestDiscValidate(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -236,8 +232,6 @@ func TestValidateEntries(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 

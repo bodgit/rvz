@@ -1,3 +1,5 @@
+// Package packed implements a reader for the RVZ packed stream, which
+// interleaves stored data with seeds for regenerating padding.
 package packed
 
 import (

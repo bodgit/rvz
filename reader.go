@@ -1,3 +1,5 @@
+// Package rvz implements a reader for RVZ compressed GameCube and Wii disc
+// images, as created by the Dolphin emulator.
 package rvz
 
 import (

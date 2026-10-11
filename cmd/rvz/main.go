@@ -1,3 +1,4 @@
+// Command rvz decompresses RVZ disc images to ISO images.
 package main
 
 import (
