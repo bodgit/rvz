@@ -1,7 +1,7 @@
 package rvz
 
 import (
-	"errors"
+	"math"
 
 	"github.com/bodgit/rvz/internal/util"
 )
@@ -20,11 +20,11 @@ func ceilDiv(x, y uint64) uint64 {
 
 func (h *header) validate() error {
 	if h.Version < rvzVersionReadCompatible || h.VersionCompatible > rvzVersion {
-		return errors.New("rvz: unsupported version")
+		return errUnsupportedVersion
 	}
 
 	if h.IsoFileSize == 0 || h.IsoFileSize > maxIsoFileSize {
-		return errors.New("rvz: bad disc size")
+		return errBadDiscSize
 	}
 
 	return nil
@@ -33,29 +33,33 @@ func (h *header) validate() error {
 // validate checks the fields that determine how much is allocated for the
 // partition, raw data and group tables before any of them are read.
 func (d *disc) validate(h *header) error {
+	if d.PartOff > math.MaxInt64 || d.RawDataOff > math.MaxInt64 || d.GroupOff > math.MaxInt64 {
+		return errBadTableOffset
+	}
+
 	if int(d.ComprDataLen) > len(d.ComprData) {
-		return errors.New("rvz: bad compressor data length")
+		return errBadComprDataLen
 	}
 
 	if decompressor(d.Compression) == nil {
-		return errors.New("rvz: unsupported algorithm")
+		return errUnsupportedAlgorithm
 	}
 
 	sectors := ceilDiv(h.IsoFileSize, util.SectorSize)
 
 	if uint64(d.NumPart) > sectors {
-		return errors.New("rvz: too many partitions")
+		return errTooManyPartitions
 	}
 
 	if uint64(d.NumRawData) > sectors {
-		return errors.New("rvz: too many raw data entries")
+		return errTooManyRawDataEntries
 	}
 
 	// Each raw data region and both data areas of each partition can
 	// end with a partial group
 	maxGroups := ceilDiv(h.IsoFileSize, uint64(d.ChunkSize)) + uint64(d.NumRawData) + 2*uint64(d.NumPart)
 	if uint64(d.NumGroup) > maxGroups {
-		return errors.New("rvz: too many groups")
+		return errTooManyGroups
 	}
 
 	return nil
@@ -63,12 +67,12 @@ func (d *disc) validate(h *header) error {
 
 func (pd *partData) validate(h *header, d *disc) error {
 	if (uint64(pd.FirstSector)+uint64(pd.NumSector))*util.SectorSize > h.IsoFileSize {
-		return errors.New("rvz: partition data outside disc")
+		return errPartDataOutsideDisc
 	}
 
 	if uint64(pd.GroupIndex)+uint64(pd.NumGroup) > uint64(d.NumGroup) ||
-		ceilDiv(uint64(pd.NumSector), uint64(d.sectorsPerChunk())) > uint64(pd.NumGroup) {
-		return errors.New("rvz: bad partition data groups")
+		ceilDiv(uint64(pd.NumSector), uint64(d.ChunkSize)/util.SectorSize) > uint64(pd.NumGroup) {
+		return errBadPartDataGroups
 	}
 
 	return nil
@@ -76,12 +80,12 @@ func (pd *partData) validate(h *header, d *disc) error {
 
 func (x *raw) validate(h *header, d *disc) error {
 	if x.RawDataSize > h.IsoFileSize || x.RawDataOff > h.IsoFileSize-x.RawDataSize {
-		return errors.New("rvz: raw data outside disc")
+		return errRawDataOutsideDisc
 	}
 
 	if uint64(x.GroupIndex)+uint64(x.NumGroup) > uint64(d.NumGroup) ||
 		ceilDiv(x.RawDataSize, uint64(d.ChunkSize)) > uint64(x.NumGroup) {
-		return errors.New("rvz: bad raw data groups")
+		return errBadRawDataGroups
 	}
 
 	return nil

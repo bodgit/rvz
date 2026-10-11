@@ -14,6 +14,7 @@ const closeTestMethod = 0xc105ed
 
 type closeRecorder struct {
 	io.Reader
+
 	closed bool
 }
 

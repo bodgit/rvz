@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	padded   = 1 << 31
-	seedSize = 17 * 4
+	padded     = 1 << 31
+	seedSize   = 17 * 4
+	plainSize  = 1000
+	paddedSize = 5000
 )
 
 func seed() []byte {
@@ -32,14 +34,15 @@ func seed() []byte {
 func stream(t *testing.T, offset int64) ([]byte, []byte) {
 	t.Helper()
 
-	plain := bytes.Repeat([]byte{0xaa}, 1000)
-	paddedSize := int64(5000)
+	plain := bytes.Repeat([]byte{0xaa}, plainSize)
 
-	pr, err := padding.NewReadCloser(bytes.NewReader(seed()), offset+int64(len(plain)))
+	pr, err := padding.NewReadCloser(bytes.NewReader(seed()), offset+plainSize)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pr.Close()
+	defer func() {
+		_ = pr.Close()
+	}()
 
 	pad := make([]byte, paddedSize)
 	if _, err := io.ReadFull(pr, pad); err != nil {
@@ -47,7 +50,7 @@ func stream(t *testing.T, offset int64) ([]byte, []byte) {
 	}
 
 	b := new(bytes.Buffer)
-	_ = binary.Write(b, binary.BigEndian, uint32(len(plain)))
+	_ = binary.Write(b, binary.BigEndian, uint32(plainSize))
 	b.Write(plain)
 	_ = binary.Write(b, binary.BigEndian, uint32(0))
 	_ = binary.Write(b, binary.BigEndian, uint32(padded|paddedSize))
@@ -74,18 +77,13 @@ func TestReadCloser(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 
 			offset := int64(0x12345)
 			in, want := stream(t, offset)
 
-			rc, err := packed.NewReadCloser(io.NopCloser(bytes.NewReader(in)), offset)
-			if err != nil {
-				t.Fatal(err)
-			}
+			rc := packed.NewReadCloser(io.NopCloser(bytes.NewReader(in)), offset)
 
 			got, err := io.ReadAll(table.wrap(rc))
 			if err != nil {
@@ -104,11 +102,8 @@ func TestReadCloserTruncated(t *testing.T) {
 	in, _ := stream(t, 0)
 
 	// Cut the stream part way through the plain entry
-	rc, err := packed.NewReadCloser(io.NopCloser(bytes.NewReader(in[:500])), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rc := packed.NewReadCloser(io.NopCloser(bytes.NewReader(in[:500])), 0)
 
-	_, err = io.ReadAll(rc)
+	_, err := io.ReadAll(rc)
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }

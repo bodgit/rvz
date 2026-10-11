@@ -1,6 +1,8 @@
+// Package zstd provides a pooled Zstandard decompressor for RVZ groups.
 package zstd
 
 import (
+	"fmt"
 	"io"
 	"runtime"
 	"sync"
@@ -29,13 +31,13 @@ func NewReader(_ []byte, reader io.Reader) (io.ReadCloser, error) {
 	r, ok := zstdReaderPool.Get().(*zstd.Decoder)
 	if ok {
 		if err = r.Reset(reader); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("zstd: %w", err)
 		}
 	} else {
 		// Groups are already decompressed in parallel so use a
 		// synchronous decoder to avoid spawning extra goroutines
 		if r, err = zstd.NewReader(reader, zstd.WithDecoderConcurrency(1)); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("zstd: %w", err)
 		}
 
 		runtime.SetFinalizer(r, (*zstd.Decoder).Close)

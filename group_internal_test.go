@@ -25,7 +25,9 @@ func TestEmptyPartitionGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
+	defer func() {
+		_ = rc.Close()
+	}()
 
 	b, err := io.ReadAll(rc)
 	if err != nil {

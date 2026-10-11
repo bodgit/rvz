@@ -1,8 +1,11 @@
+// Package padding generates the pseudorandom padding data found on
+// GameCube and Wii discs.
 package padding
 
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"sync"
 
@@ -22,12 +25,6 @@ type readCloser struct {
 	buf  *bytes.Buffer
 }
 
-func (rc *readCloser) advance() {
-	for i := range rc.prng {
-		rc.prng[i] ^= rc.prng[(i+len(rc.prng)-32)%len(rc.prng)]
-	}
-}
-
 func (rc *readCloser) Read(p []byte) (int, error) {
 	if rc.buf.Len() == 0 {
 		for _, x := range rc.prng {
@@ -40,7 +37,8 @@ func (rc *readCloser) Read(p []byte) (int, error) {
 		rc.advance()
 	}
 
-	return rc.buf.Read(p)
+	// The buffer was refilled above so this can't fail
+	return copy(p, rc.buf.Next(len(p))), nil
 }
 
 func (rc *readCloser) Close() error {
@@ -48,6 +46,12 @@ func (rc *readCloser) Close() error {
 	bufPool.Put(rc.buf)
 
 	return nil
+}
+
+func (rc *readCloser) advance() {
+	for i := range rc.prng {
+		rc.prng[i] ^= rc.prng[(i+len(rc.prng)-32)%len(rc.prng)]
+	}
 }
 
 // NewReadCloser returns an io.ReadCloser that generates a stream of GameCube
@@ -66,7 +70,7 @@ func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
 	}
 
 	if err := binary.Read(r, binary.BigEndian, rc.prng); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("padding: reading seed: %w", err)
 	}
 
 	rc.prng = rc.prng[:maximumSize]
@@ -85,12 +89,12 @@ func NewReadCloser(r io.Reader, offset int64) (io.ReadCloser, error) {
 		rc.prng[i] = rc.prng[i-17]<<23 ^ rc.prng[i-16]>>9 ^ rc.prng[i-1]
 	}
 
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		rc.advance()
 	}
 
 	if _, err := io.CopyN(io.Discard, rc, offset%util.SectorSize); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("padding: skipping to offset: %w", err)
 	}
 
 	return rc, nil

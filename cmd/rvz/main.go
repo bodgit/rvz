@@ -1,6 +1,8 @@
+// Command rvz decompresses RVZ disc images to ISO images.
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +17,8 @@ import (
 )
 
 const isoExtension = ".iso"
+
+var errISOExtension = errors.New("source file already has " + isoExtension + " extension")
 
 var (
 	version = "dev"
@@ -39,40 +43,54 @@ func decompress(c *cli.Context) error {
 	src, dst := c.Args().Get(0), c.Args().Get(1)
 	if dst == "" {
 		if ext := filepath.Ext(src); ext == isoExtension {
-			return fmt.Errorf("source file %s already has %s extension", src, isoExtension)
+			return fmt.Errorf("%w: %s", errISOExtension, src)
 		}
 
 		dst = strings.TrimSuffix(src, rvz.Extension) + isoExtension
 	}
 
-	f, err := os.Open(src)
+	return decompressFile(src, dst, c.Bool("verbose"))
+}
+
+func decompressFile(src, dst string, verbose bool) (err error) {
+	f, err := os.Open(filepath.Clean(src))
 	if err != nil {
-		return err
+		return fmt.Errorf("opening source: %w", err)
 	}
-	defer f.Close()
+
+	defer func() {
+		_ = f.Close()
+	}()
 
 	r, err := rvz.NewReader(f)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading %s: %w", src, err)
 	}
 
 	var w io.WriteCloser
 
-	w, err = os.Create(dst)
+	w, err = os.Create(filepath.Clean(dst))
 	if err != nil {
-		return err
+		return fmt.Errorf("creating target: %w", err)
 	}
 
-	if c.Bool("verbose") {
+	if verbose {
 		pb := progressbar.DefaultBytes(r.Size())
 		w = plumbing.MultiWriteCloser(w, plumbing.NopWriteCloser(pb))
 	}
 
-	defer w.Close()
+	// A failure to close the target may mean it's incomplete
+	defer func() {
+		if cerr := w.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing target: %w", cerr)
+		}
+	}()
 
-	_, err = io.Copy(w, r)
+	if _, err = io.Copy(w, r); err != nil {
+		return fmt.Errorf("decompressing %s: %w", src, err)
+	}
 
-	return err
+	return nil
 }
 
 func main() {

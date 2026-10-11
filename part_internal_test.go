@@ -14,6 +14,11 @@ import (
 
 const testSectors = 2
 
+// fill returns the byte used to fill the data in group g.
+func fill(g int) byte {
+	return [testSectors]byte{0x11, 0x22}[g]
+}
+
 // testPartition returns a reader for a partition of testSectors sectors
 // stored as uncompressed groups, with the exceptions for each group. The
 // data in each group is filled with 0x11, 0x22, etc.
@@ -23,7 +28,7 @@ func testPartition(t *testing.T, chunkSize uint32, exceptions [][]except) *reade
 	r := &reader{
 		disc: disc{
 			ChunkSize: chunkSize,
-			NumGroup:  uint32(len(exceptions)),
+			NumGroup:  uint32(len(exceptions)), //nolint:gosec // test data is small
 		},
 		part: []part{
 			{
@@ -31,7 +36,7 @@ func testPartition(t *testing.T, chunkSize uint32, exceptions [][]except) *reade
 				Data: [2]partData{
 					{
 						NumSector: testSectors,
-						NumGroup:  uint32(len(exceptions)),
+						NumGroup:  uint32(len(exceptions)), //nolint:gosec // test data is small
 					},
 				},
 			},
@@ -44,18 +49,18 @@ func testPartition(t *testing.T, chunkSize uint32, exceptions [][]except) *reade
 	for i, e := range exceptions {
 		offset := b.Len()
 
-		_ = binary.Write(b, binary.BigEndian, uint16(len(e)))
+		_ = binary.Write(b, binary.BigEndian, uint16(len(e))) //nolint:gosec // test data is small
 		_ = binary.Write(b, binary.BigEndian, e)
 
 		for b.Len()%4 != 0 {
 			_ = b.WriteByte(0)
 		}
 
-		b.Write(bytes.Repeat([]byte{byte(0x11 * (i + 1))}, sectorsPerGroup*(util.SectorSize-hashSize)))
+		b.Write(bytes.Repeat([]byte{fill(i)}, sectorsPerGroup*(util.SectorSize-hashSize)))
 
 		r.group = append(r.group, group{
-			Offset: uint32(offset >> 2),
-			Size:   uint32(b.Len() - offset),
+			Offset: uint32(offset >> 2),      //nolint:gosec // test data is small
+			Size:   uint32(b.Len() - offset), //nolint:gosec // test data is small
 		})
 	}
 
@@ -158,8 +163,6 @@ func TestHashExceptions(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -178,11 +181,11 @@ func TestHashExceptions(t *testing.T) {
 
 			assert.Len(t, b, testSectors*util.SectorSize)
 
-			for s := 0; s < testSectors; s++ {
+			for s := range testSectors {
 				hashes, data := decryptSector(t, r.part[0].Key, b[s*util.SectorSize:(s+1)*util.SectorSize])
 
 				g := s / r.disc.sectorsPerChunk()
-				assert.Equal(t, len(data), bytes.Count(data, []byte{byte(0x11 * (g + 1))}), "sector %d data", s)
+				assert.Equal(t, len(data), bytes.Count(data, []byte{fill(g)}), "sector %d data", s)
 
 				// The H0 hashes are never all 0xee, so only the
 				// exception can put it there

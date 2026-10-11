@@ -1,6 +1,7 @@
 package rvz
 
 import (
+	"math"
 	"testing"
 
 	"github.com/bodgit/rvz/internal/util"
@@ -67,8 +68,6 @@ func TestHeaderValidate(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -111,6 +110,13 @@ func TestDiscValidate(t *testing.T) {
 			err: true,
 		},
 		{
+			name: "table offset too large",
+			modify: func(d *disc) {
+				d.GroupOff = math.MaxInt64 + 1
+			},
+			err: true,
+		},
+		{
 			name: "unsupported compression",
 			modify: func(d *disc) {
 				d.Compression = 0xffffffff
@@ -147,8 +153,6 @@ func TestDiscValidate(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -236,8 +240,6 @@ func TestValidateEntries(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		table := table
-
 		t.Run(table.name, func(t *testing.T) {
 			t.Parallel()
 

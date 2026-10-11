@@ -1,0 +1,29 @@
+package rvz
+
+import "errors"
+
+var (
+	errBadChunkSize          = errors.New("rvz: bad chunk size")
+	errBadComprDataLen       = errors.New("rvz: bad compressor data length")
+	errBadDiscSize           = errors.New("rvz: bad disc size")
+	errBadExceptionOffset    = errors.New("rvz: bad hash exception offset")
+	errBadMagic              = errors.New("rvz: bad magic")
+	errBadPartDataGroups     = errors.New("rvz: bad partition data groups")
+	errBadRawDataGroups      = errors.New("rvz: bad raw data groups")
+	errBadTableOffset        = errors.New("rvz: bad table offset")
+	errDiscHash              = errors.New("rvz: disc hash doesn't match")
+	errDiscStructSize        = errors.New("rvz: disc struct has wrong size")
+	errHeaderHash            = errors.New("rvz: header hash doesn't match")
+	errInvalidDiscType       = errors.New("rvz: invalid disc type")
+	errNoReader              = errors.New("rvz: cannot find reader")
+	errPartDataOutsideDisc   = errors.New("rvz: partition data outside disc")
+	errPartHash              = errors.New("rvz: partition hash doesn't match")
+	errPartStructSize        = errors.New("rvz: part struct has wrong size")
+	errPurgeUnsupported      = errors.New("rvz: purge method not supported")
+	errRawDataOutsideDisc    = errors.New("rvz: raw data outside disc")
+	errTooManyGroups         = errors.New("rvz: too many groups")
+	errTooManyPartitions     = errors.New("rvz: too many partitions")
+	errTooManyRawDataEntries = errors.New("rvz: too many raw data entries")
+	errUnsupportedAlgorithm  = errors.New("rvz: unsupported algorithm")
+	errUnsupportedVersion    = errors.New("rvz: unsupported version")
+)

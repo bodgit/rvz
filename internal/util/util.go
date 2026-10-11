@@ -1,3 +1,4 @@
+// Package util contains constants shared between packages.
 package util
 
 const (

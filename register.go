@@ -2,7 +2,6 @@ package rvz
 
 import (
 	"compress/bzip2"
-	"errors"
 	"io"
 	"sync"
 
@@ -27,7 +26,7 @@ func init() {
 	}))
 	// Purge. RVZ removed support for this algorithm from the original WIA format
 	RegisterDecompressor(1, Decompressor(func(_ []byte, _ io.Reader) (io.ReadCloser, error) {
-		return nil, errors.New("purge method not supported")
+		return nil, errPurgeUnsupported
 	}))
 	// Bzip2
 	RegisterDecompressor(2, Decompressor(func(_ []byte, r io.Reader) (io.ReadCloser, error) {
