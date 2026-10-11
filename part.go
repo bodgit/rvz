@@ -54,6 +54,8 @@ type partReader struct {
 	p, d   int
 	r      *reader
 	sector int
+
+	block cipher.Block
 }
 
 func (pr *partReader) groupOffset(g int) int64 {
@@ -147,21 +149,14 @@ func (pr *partReader) writeHashes() {
 //nolint:gochecknoglobals
 var iv = make([]byte, aes.BlockSize) // 16 x 0x00
 
-func (pr *partReader) encryptSector(sector int) error {
-	block, err := aes.NewCipher(pr.r.part[pr.p].Key[:])
-	if err != nil {
-		return err
-	}
-
+func (pr *partReader) encryptSector(sector int) {
 	offset := sector * util.SectorSize
 
-	e := cipher.NewCBCEncrypter(block, iv)
+	e := cipher.NewCBCEncrypter(pr.block, iv)
 	e.CryptBlocks(pr.buf[offset:], pr.h0[sector].Bytes())
 
-	e = cipher.NewCBCEncrypter(block, pr.buf[offset+ivOffset:offset+ivOffset+aes.BlockSize])
+	e = cipher.NewCBCEncrypter(pr.block, pr.buf[offset+ivOffset:offset+ivOffset+aes.BlockSize])
 	e.CryptBlocks(pr.buf[offset+hashSize:], pr.cluster[sector].Bytes())
-
-	return nil
 }
 
 func (pr *partReader) sectorToGroup(sector int) int {
@@ -170,6 +165,13 @@ func (pr *partReader) sectorToGroup(sector int) int {
 
 //nolint:nakedret
 func (pr *partReader) read() (err error) {
+	// The block is only read from so can be shared by each sector
+	if pr.block == nil {
+		if pr.block, err = aes.NewCipher(pr.r.part[pr.p].Key[:]); err != nil {
+			return
+		}
+	}
+
 	eg := new(errgroup.Group)
 	eg.SetLimit(runtime.NumCPU())
 
@@ -197,7 +199,9 @@ func (pr *partReader) read() (err error) {
 		i := i
 
 		eg.Go(func() error {
-			return pr.encryptSector(i)
+			pr.encryptSector(i)
+
+			return nil
 		})
 	}
 

@@ -1,11 +1,9 @@
 package packed
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
-	"sync"
 
 	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/padding"
@@ -16,13 +14,10 @@ const (
 	sizeMask        = padded - 1
 )
 
-var pool sync.Pool //nolint:gochecknoglobals
-
 type readCloser struct {
 	rc     io.ReadCloser
 	src    io.ReadCloser
 	size   int64
-	buf    *bytes.Buffer
 	offset int64
 }
 
@@ -46,67 +41,59 @@ func (rc *readCloser) nextReader() (err error) {
 		rc.src = io.NopCloser(io.LimitReader(rc.rc, rc.size))
 	}
 
+	if rc.size == 0 {
+		return rc.closeSrc()
+	}
+
 	return nil
+}
+
+func (rc *readCloser) closeSrc() error {
+	err := rc.src.Close()
+	rc.src = nil
+
+	return err
 }
 
 //nolint:nakedret
-func (rc *readCloser) read() (err error) {
-	for {
-		if rc.size == 0 {
-			if err = rc.nextReader(); err != nil {
-				if errors.Is(err, io.EOF) {
-					return nil
-				}
+func (rc *readCloser) Read(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return
+	}
 
-				return
-			}
-		}
-
-		var (
-			n         int64
-			remaining = int64(rc.buf.Cap() - rc.buf.Len())
-		)
-
-		if remaining >= rc.size {
-			n, err = io.Copy(rc.buf, rc.src)
-		} else {
-			n, err = io.CopyN(rc.buf, rc.src, remaining)
-		}
-
-		if err != nil {
+	// Skip any empty entries
+	for rc.src == nil {
+		if err = rc.nextReader(); err != nil {
 			return
 		}
-
-		rc.size -= n
-		rc.offset += n
-
-		if rc.size == 0 {
-			if err = rc.src.Close(); err != nil {
-				return
-			}
-
-			rc.src = nil
-		}
-
-		if rc.buf.Len() == rc.buf.Cap() {
-			break
-		}
 	}
 
-	return nil
-}
-
-func (rc *readCloser) Read(p []byte) (int, error) {
-	if err := rc.read(); err != nil && !errors.Is(err, io.EOF) {
-		return 0, err
+	if int64(len(p)) > rc.size {
+		p = p[:rc.size]
 	}
 
-	return rc.buf.Read(p)
+	n, err = rc.src.Read(p)
+	rc.size -= int64(n)
+	rc.offset += int64(n)
+
+	switch {
+	case rc.size == 0:
+		if cerr := rc.closeSrc(); cerr != nil {
+			return n, cerr
+		}
+
+		// There may be more entries to follow
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+	case errors.Is(err, io.EOF):
+		err = io.ErrUnexpectedEOF
+	}
+
+	return
 }
 
 func (rc *readCloser) Close() (err error) {
-	pool.Put(rc.buf)
-
 	if rc.src != nil {
 		if err = rc.src.Close(); err != nil {
 			return
@@ -121,20 +108,8 @@ func (rc *readCloser) Close() (err error) {
 // starts relative to the beginning of the uncompressed disc image is also
 // required.
 func NewReadCloser(rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
-	nrc := &readCloser{
+	return &readCloser{
 		rc:     rc,
 		offset: offset,
-	}
-
-	b, ok := pool.Get().(*bytes.Buffer)
-	if ok {
-		b.Reset()
-	} else {
-		b = new(bytes.Buffer)
-		b.Grow(1 << 16)
-	}
-
-	nrc.buf = b
-
-	return nrc, nil
+	}, nil
 }
