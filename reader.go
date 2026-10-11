@@ -3,6 +3,7 @@
 package rvz
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/aes"
 	"crypto/sha1" //nolint:gosec
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/packed"
@@ -21,6 +23,11 @@ const (
 	Extension = ".rvz"
 
 	rvzMagic uint32 = 0x52565a01 // 'R', 'V', 'Z', 0x01
+
+	// Size of the buffer between the image and each group, enough
+	// to turn the many small reads of the packed stream and hash
+	// exceptions into a handful of large ones.
+	groupBufferSize = 64 << 10
 )
 
 const (
@@ -212,17 +219,19 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (io.ReadCloser
 		return io.NopCloser(io.LimitReader(plumbing.DevZero(), r.disc.chunkSize(partition))), nil, nil
 	}
 
-	var rc io.ReadCloser
+	br := newGroupBuffer(io.NewSectionReader(r.ra, group.offset(), group.size()))
+
+	var rc io.ReadCloser = br
 
 	if group.compressed() {
-		var err error
-
-		rc, err = r.decompressor(io.NewSectionReader(r.ra, group.offset(), group.size()))
+		dc, err := r.decompressor(br)
 		if err != nil {
+			_ = br.Close()
+
 			return nil, nil, err
 		}
-	} else {
-		rc = io.NopCloser(io.NewSectionReader(r.ra, group.offset(), group.size()))
+
+		rc = &decompressReadCloser{ReadCloser: dc, br: br}
 	}
 
 	var exceptions []except
@@ -242,6 +251,59 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (io.ReadCloser
 	}
 
 	return rc, exceptions, nil
+}
+
+//nolint:gochecknoglobals
+var groupBufferPool = sync.Pool{
+	New: func() any {
+		return bufio.NewReaderSize(nil, groupBufferSize)
+	},
+}
+
+// groupBuffer is a pooled buffered reader of the raw bytes of a group.
+type groupBuffer struct {
+	*bufio.Reader
+}
+
+func newGroupBuffer(r io.Reader) *groupBuffer {
+	br, ok := groupBufferPool.Get().(*bufio.Reader)
+	if !ok {
+		br = bufio.NewReaderSize(nil, groupBufferSize)
+	}
+
+	br.Reset(r)
+
+	return &groupBuffer{br}
+}
+
+// Close returns the buffer to the pool, it is safe to call more than once.
+func (gb *groupBuffer) Close() error {
+	if gb.Reader != nil {
+		gb.Reset(nil)
+		groupBufferPool.Put(gb.Reader)
+		gb.Reader = nil
+	}
+
+	return nil
+}
+
+// decompressReadCloser closes the decompressor before returning the buffer
+// it was reading from to the pool.
+type decompressReadCloser struct {
+	io.ReadCloser
+
+	br *groupBuffer
+}
+
+func (rc *decompressReadCloser) Close() error {
+	err := rc.ReadCloser.Close()
+	_ = rc.br.Close()
+
+	if err != nil {
+		return fmt.Errorf("rvz: closing decompressor: %w", err)
+	}
+
+	return nil
 }
 
 // readExceptions reads the hash exceptions at the start of a group of
