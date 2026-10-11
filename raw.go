@@ -1,62 +1,64 @@
 package rvz
 
 import (
-	"errors"
 	"fmt"
 	"io"
-
-	"github.com/bodgit/plumbing"
 )
 
+// A rawReader decompresses a raw data area. Each 2 MiB block covers one or
+// more whole groups so they can be prefetched in parallel.
 type rawReader struct {
-	i, g   int
-	r      *reader
-	gr     io.ReadCloser
-	offset int64
+	i int
+	r *reader
 }
 
-func (rr *rawReader) Read(p []byte) (int, error) {
-	end := rr.r.raw[rr.i].end()
-	if rr.offset == end {
-		return 0, io.EOF
-	}
+// fill decompresses the groups covering the i-th 2 MiB block of the raw data
+// area into buf, returning how much of it is used.
+func (rr *rawReader) fill(i int, buf []byte) (int, error) {
+	x := rr.r.raw[rr.i]
+	chunkSize := rr.r.disc.chunkSize(false)
 
-	if rr.gr == nil {
-		gr, _, err := rr.r.groupReader(rr.g, rr.offset, false)
-		if err != nil {
+	start := x.offset() + int64(i)*prefetchSize
+	size := int(min(prefetchSize, x.end()-start))
+	g := int(x.GroupIndex) + i*int(prefetchSize/chunkSize)
+
+	// The last group may be shorter than the chunk size
+	for off := 0; off < size; off, g = off+int(chunkSize), g+1 {
+		if err := rr.readGroup(g, start+int64(off), buf[off:min(off+int(chunkSize), size)]); err != nil {
 			return 0, err
 		}
-
-		// The last group may be shorter than the chunk size
-		rr.gr = plumbing.LimitReadCloser(gr, end-rr.offset)
 	}
 
-	n, err := rr.gr.Read(p)
-	rr.offset += int64(n)
+	return size, nil
+}
 
-	switch {
-	case err == nil:
-		return n, nil
-	case !errors.Is(err, io.EOF):
-		return n, fmt.Errorf("rvz: reading raw data: %w", err)
+// readGroup decompresses group g, which starts at offset on the disc, into
+// buf.
+func (rr *rawReader) readGroup(g int, offset int64, buf []byte) error {
+	gr, _, err := rr.r.groupReader(g, offset, false)
+	if err != nil {
+		return err
 	}
 
-	// This group is finished, move on to the next one
-	if err := rr.gr.Close(); err != nil {
-		return n, fmt.Errorf("rvz: closing group: %w", err)
+	defer func() {
+		_ = gr.Close()
+	}()
+
+	if _, err := io.ReadFull(gr, buf); err != nil {
+		return fmt.Errorf("rvz: reading raw data: %w", err)
 	}
 
-	rr.g++
-	rr.gr = nil
-
-	return n, nil
+	return nil
 }
 
 func newRawReader(r *reader, i int) io.Reader {
-	return &rawReader{
-		i:      i,
-		g:      int(r.raw[i].GroupIndex),
-		r:      r,
-		offset: r.raw[i].offset(),
+	rr := &rawReader{
+		i: i,
+		r: r,
 	}
+
+	x := r.raw[i]
+	blocks := int((x.end() - x.offset() + prefetchSize - 1) / prefetchSize)
+
+	return newPrefetcher(blocks, rr.fill)
 }
