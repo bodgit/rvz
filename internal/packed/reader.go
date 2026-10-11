@@ -67,16 +67,15 @@ func (rc *readCloser) closeSrc() error {
 	return nil
 }
 
-//nolint:nakedret
-func (rc *readCloser) Read(p []byte) (n int, err error) {
+func (rc *readCloser) Read(p []byte) (int, error) {
 	if len(p) == 0 {
-		return
+		return 0, nil
 	}
 
 	// Skip any empty entries
 	for rc.src == nil {
-		if err = rc.nextReader(); err != nil {
-			return
+		if err := rc.nextReader(); err != nil {
+			return 0, err
 		}
 	}
 
@@ -84,14 +83,14 @@ func (rc *readCloser) Read(p []byte) (n int, err error) {
 		p = p[:rc.size]
 	}
 
-	n, err = rc.src.Read(p)
+	n, err := rc.src.Read(p)
 	rc.size -= int64(n)
 	rc.offset += int64(n)
 
 	switch {
 	case rc.size == 0:
-		if cerr := rc.closeSrc(); cerr != nil {
-			return n, cerr
+		if err := rc.closeSrc(); err != nil {
+			return n, err
 		}
 
 		// There may be more entries to follow
@@ -102,17 +101,17 @@ func (rc *readCloser) Read(p []byte) (n int, err error) {
 		err = io.ErrUnexpectedEOF
 	}
 
-	return
+	return n, err
 }
 
-func (rc *readCloser) Close() (err error) {
+func (rc *readCloser) Close() error {
 	if rc.src != nil {
-		if err = rc.src.Close(); err != nil {
-			return
+		if err := rc.closeSrc(); err != nil {
+			return err
 		}
 	}
 
-	if err = rc.rc.Close(); err != nil {
+	if err := rc.rc.Close(); err != nil {
 		return fmt.Errorf("packed: %w", err)
 	}
 

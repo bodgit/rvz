@@ -222,12 +222,12 @@ func (r *reader) groupReader(g int, offset int64, partition bool) (rc io.ReadClo
 	return rc, exceptions, nil
 }
 
-func (r *reader) nextReader() (err error) {
+func (r *reader) nextReader() error {
 	for i, x := range r.raw {
 		if r.offset == int64(x.RawDataOff) && x.RawDataSize > 0 {
 			r.r = newRawReader(r, i)
 
-			return
+			return nil
 		}
 	}
 
@@ -236,7 +236,7 @@ func (r *reader) nextReader() (err error) {
 			if r.offset == int64(x.Data[j].FirstSector)*util.SectorSize && x.Data[j].NumSector > 0 {
 				r.r = newPartReader(r, i, j)
 
-				return
+				return nil
 			}
 		}
 	}
@@ -244,29 +244,26 @@ func (r *reader) nextReader() (err error) {
 	return errNoReader
 }
 
-func (r *reader) Read(p []byte) (n int, err error) {
+func (r *reader) Read(p []byte) (int, error) {
 	if r.offset == int64(r.header.IsoFileSize) {
 		return 0, io.EOF
 	}
 
 	if r.r == nil {
-		if err = r.nextReader(); err != nil {
-			return
+		if err := r.nextReader(); err != nil {
+			return 0, err
 		}
 	}
 
-	n, err = r.r.Read(p)
+	n, err := r.r.Read(p)
 	r.offset += int64(n)
 
-	if err != nil {
-		if !errors.Is(err, io.EOF) {
-			return
-		}
-
+	// The end of one area isn't the end of the disc
+	if errors.Is(err, io.EOF) {
 		r.r, err = nil, nil
 	}
 
-	return
+	return n, err
 }
 
 func (r *reader) Size() int64 {

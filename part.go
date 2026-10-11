@@ -180,13 +180,15 @@ func (pr *partReader) sectorToGroup(sector int) int {
 	return int(pr.r.part[pr.p].Data[pr.d].GroupIndex) + sector/(int(pr.r.disc.ChunkSize)/util.SectorSize)
 }
 
-//nolint:nakedret
-func (pr *partReader) read() (err error) {
+func (pr *partReader) read() error {
 	// The block is only read from so can be shared by each sector
 	if pr.block == nil {
-		if pr.block, err = aes.NewCipher(pr.r.part[pr.p].Key[:]); err != nil {
-			return
+		block, err := aes.NewCipher(pr.r.part[pr.p].Key[:])
+		if err != nil {
+			return fmt.Errorf("rvz: %w", err)
 		}
+
+		pr.block = block
 	}
 
 	eg := new(errgroup.Group)
@@ -200,14 +202,14 @@ func (pr *partReader) read() (err error) {
 		})
 	}
 
-	if err = eg.Wait(); err != nil {
-		return
+	if err := eg.Wait(); err != nil {
+		return err //nolint:wrapcheck // readGroup errors already have context
 	}
 
 	pr.writeHashes()
 
-	if err = pr.applyExceptions(); err != nil {
-		return
+	if err := pr.applyExceptions(); err != nil {
+		return err
 	}
 
 	sectors := min(clusters, int(pr.r.part[pr.p].Data[pr.d].NumSector)-pr.sector)
@@ -222,21 +224,20 @@ func (pr *partReader) read() (err error) {
 		})
 	}
 
-	if err = eg.Wait(); err != nil {
-		return
-	}
+	// Encrypting a sector can't fail
+	_ = eg.Wait()
 
 	return nil
 }
 
-func (pr *partReader) Read(p []byte) (n int, err error) {
+func (pr *partReader) Read(p []byte) (int, error) {
 	if pr.br.Len() == 0 {
 		if pr.sector == int(pr.r.part[pr.p].Data[pr.d].NumSector) {
 			return 0, io.EOF
 		}
 
-		if err = pr.read(); err != nil {
-			return
+		if err := pr.read(); err != nil {
+			return 0, err
 		}
 
 		pr.br.Reset(pr.buf)
@@ -244,9 +245,10 @@ func (pr *partReader) Read(p []byte) (n int, err error) {
 		pr.sector += pr.br.Len() / util.SectorSize
 	}
 
-	n, err = pr.br.Read(p)
+	// The reader was refilled above so this can't fail
+	n, _ := pr.br.Read(p)
 
-	return
+	return n, nil
 }
 
 func newPartReader(r *reader, p, d int) io.Reader {
