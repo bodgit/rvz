@@ -53,7 +53,7 @@ func decompress(c *cli.Context) error {
 }
 
 func decompressFile(src, dst string, verbose bool) (err error) {
-	f, err := os.Open(src) //nolint:gosec // the user chooses which file to read
+	f, err := os.Open(filepath.Clean(src))
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
@@ -69,7 +69,7 @@ func decompressFile(src, dst string, verbose bool) (err error) {
 
 	var w io.WriteCloser
 
-	w, err = os.Create(dst) //nolint:gosec // the user chooses which file to write
+	w, err = os.Create(filepath.Clean(dst))
 	if err != nil {
 		return fmt.Errorf("creating target: %w", err)
 	}
