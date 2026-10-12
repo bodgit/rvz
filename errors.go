@@ -13,6 +13,7 @@ var (
 	errBadTableOffset        = errors.New("rvz: bad table offset")
 	errDiscHash              = errors.New("rvz: disc hash doesn't match")
 	errDiscStructSize        = errors.New("rvz: disc struct has wrong size")
+	errFileTooLarge          = errors.New("rvz: compressed file too large")
 	errHeaderHash            = errors.New("rvz: header hash doesn't match")
 	errInvalidDiscType       = errors.New("rvz: invalid disc type")
 	errNoReader              = errors.New("rvz: cannot find reader")
