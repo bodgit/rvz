@@ -30,6 +30,27 @@ const (
 	groupBufferSize = 64 << 10
 )
 
+// The chunk sizes supported by the RVZ format.
+const (
+	ChunkSize32KiB = 32 << (10 + iota)
+	ChunkSize64KiB
+	ChunkSize128KiB
+	ChunkSize256KiB
+	ChunkSize512KiB
+	ChunkSize1MiB
+	ChunkSize2MiB
+)
+
+func validChunkSize(n int) bool {
+	switch n {
+	case ChunkSize32KiB, ChunkSize64KiB, ChunkSize128KiB, ChunkSize256KiB,
+		ChunkSize512KiB, ChunkSize1MiB, ChunkSize2MiB:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	gameCube = iota + 1
 	wii
@@ -454,16 +475,7 @@ func NewReader(ra io.ReaderAt) (Reader, error) {
 		return nil, errInvalidDiscType
 	}
 
-	switch r.disc.ChunkSize {
-	case util.SectorSize << 0: //  32 KiB
-	case util.SectorSize << 1: //  64 KiB
-	case util.SectorSize << 2: // 128 KiB
-	case util.SectorSize << 3: // 256 KiB
-	case util.SectorSize << 4: // 512 KiB
-	case util.SectorSize << 5: //   1 MiB
-	case util.SectorSize << 6: //   2 MiB
-		break
-	default:
+	if !validChunkSize(int(r.disc.ChunkSize)) {
 		return nil, errBadChunkSize
 	}
 

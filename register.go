@@ -10,6 +10,16 @@ import (
 	"github.com/bodgit/rvz/internal/zstd"
 )
 
+// The compression methods defined by the RVZ format.
+const (
+	MethodNone  = iota
+	MethodPurge // not supported by RVZ
+	MethodBzip2
+	MethodLZMA
+	MethodLZMA2
+	MethodZstandard
+)
+
 // Decompressor describes the function signature that decompression methods
 // must implement to return a new instance of themselves. They are passed any
 // property bytes and an io.Reader providing the stream of bytes.
@@ -20,24 +30,18 @@ var decompressors sync.Map
 
 //nolint:gochecknoinits
 func init() {
-	// None/Copy
-	RegisterDecompressor(0, Decompressor(func(_ []byte, r io.Reader) (io.ReadCloser, error) {
+	RegisterDecompressor(MethodNone, Decompressor(func(_ []byte, r io.Reader) (io.ReadCloser, error) {
 		return io.NopCloser(r), nil
 	}))
-	// Purge. RVZ removed support for this algorithm from the original WIA format
-	RegisterDecompressor(1, Decompressor(func(_ []byte, _ io.Reader) (io.ReadCloser, error) {
+	RegisterDecompressor(MethodPurge, Decompressor(func(_ []byte, _ io.Reader) (io.ReadCloser, error) {
 		return nil, errPurgeUnsupported
 	}))
-	// Bzip2
-	RegisterDecompressor(2, Decompressor(func(_ []byte, r io.Reader) (io.ReadCloser, error) {
+	RegisterDecompressor(MethodBzip2, Decompressor(func(_ []byte, r io.Reader) (io.ReadCloser, error) {
 		return io.NopCloser(bzip2.NewReader(r)), nil
 	}))
-	// LZMA
-	RegisterDecompressor(3, Decompressor(lzma.NewReader))
-	// LZMA2
-	RegisterDecompressor(4, Decompressor(lzma2.NewReader))
-	// Zstandard
-	RegisterDecompressor(5, Decompressor(zstd.NewReader))
+	RegisterDecompressor(MethodLZMA, Decompressor(lzma.NewReader))
+	RegisterDecompressor(MethodLZMA2, Decompressor(lzma2.NewReader))
+	RegisterDecompressor(MethodZstandard, Decompressor(zstd.NewReader))
 }
 
 // RegisterDecompressor allows custom decompressors for the specified method.

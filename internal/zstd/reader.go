@@ -1,4 +1,5 @@
-// Package zstd provides a pooled Zstandard decompressor for RVZ groups.
+// Package zstd provides a pooled Zstandard decompressor and a compressor for
+// RVZ groups.
 package zstd
 
 import (
