@@ -1,4 +1,4 @@
-// Command rvz decompresses RVZ disc images to ISO images.
+// Command rvz compresses ISO disc images to RVZ disc images and back again.
 package main
 
 import (
@@ -19,7 +19,17 @@ import (
 
 const isoExtension = ".iso"
 
-var errISOExtension = errors.New("source file already has " + isoExtension + " extension")
+var (
+	errISOExtension     = errors.New("source file already has " + isoExtension + " extension")
+	errRVZExtension     = errors.New("source file already has " + rvz.Extension + " extension")
+	errUnknownAlgorithm = errors.New("unknown compression algorithm")
+)
+
+//nolint:gochecknoglobals
+var methods = map[string]uint32{
+	"none": rvz.MethodNone,
+	"zstd": rvz.MethodZstandard,
+}
 
 var (
 	version = "dev"
@@ -96,12 +106,125 @@ func decompressFile(src, dst string, verbose bool) (err error) {
 	return nil
 }
 
+func compress(ctx context.Context, cmd *cli.Command) error {
+	if cmd.NArg() < 1 {
+		cli.ShowCommandHelpAndExit(ctx, cmd.Root(), cmd.Name, 1)
+	}
+
+	src, dst := cmd.Args().Get(0), cmd.Args().Get(1)
+	if dst == "" {
+		if ext := filepath.Ext(src); ext == rvz.Extension {
+			return fmt.Errorf("%w: %s", errRVZExtension, src)
+		}
+
+		dst = strings.TrimSuffix(src, isoExtension) + rvz.Extension
+	}
+
+	method, ok := methods[cmd.String("compression")]
+	if !ok {
+		return fmt.Errorf("%w: %s", errUnknownAlgorithm, cmd.String("compression"))
+	}
+
+	opts := []rvz.Option{
+		rvz.WithCompression(method, cmd.Int("level")),
+		rvz.WithChunkSize(cmd.Int("chunk-size")),
+	}
+
+	return compressFile(src, dst, cmd.Bool("verbose"), opts...)
+}
+
+// progressReaderAt writes everything read through it to w.
+type progressReaderAt struct {
+	io.ReaderAt
+
+	w io.Writer
+}
+
+func (p *progressReaderAt) ReadAt(b []byte, off int64) (int, error) {
+	n, err := p.ReaderAt.ReadAt(b, off)
+	_, _ = p.w.Write(b[:n])
+
+	return n, err //nolint:wrapcheck // must be returned as is
+}
+
+func compressFile(src, dst string, verbose bool, opts ...rvz.Option) (err error) {
+	f, err := os.Open(filepath.Clean(src))
+	if err != nil {
+		return fmt.Errorf("opening source: %w", err)
+	}
+
+	defer func() {
+		_ = f.Close()
+	}()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", src, err)
+	}
+
+	var ra io.ReaderAt = f
+
+	if verbose {
+		ra = &progressReaderAt{ReaderAt: f, w: progressbar.DefaultBytes(fi.Size())}
+	}
+
+	w, err := os.Create(filepath.Clean(dst))
+	if err != nil {
+		return fmt.Errorf("creating target: %w", err)
+	}
+
+	// A failure to close the target may mean it's incomplete
+	defer func() {
+		if cerr := w.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing target: %w", cerr)
+		}
+	}()
+
+	if err = rvz.Compress(w, ra, fi.Size(), opts...); err != nil {
+		return fmt.Errorf("compressing %s: %w", src, err)
+	}
+
+	return nil
+}
+
 func main() {
 	cmd := &cli.Command{
 		Name:    "rvz",
 		Usage:   "RVZ utility",
 		Version: fmt.Sprintf("%s, commit %s, built at %s", version, commit, date),
 		Commands: []*cli.Command{
+			{
+				Name:        "compress",
+				Usage:       "Compress ISO image",
+				Description: "Compress ISO image",
+				ArgsUsage:   "SOURCE [TARGET]",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "compression",
+						Aliases: []string{"c"},
+						Usage:   "compression algorithm, either zstd or none",
+						Value:   "zstd",
+					},
+					&cli.IntFlag{
+						Name:    "level",
+						Aliases: []string{"l"},
+						Usage:   "compression level, from 1 to 22",
+						Value:   rvz.DefaultLevel,
+					},
+					&cli.IntFlag{
+						Name:    "chunk-size",
+						Aliases: []string{"b"},
+						Usage:   "chunk size in bytes, a power of two from 32 KiB to 2 MiB",
+						Value:   rvz.DefaultChunkSize,
+					},
+					&cli.BoolFlag{
+						Name:    "verbose",
+						Aliases: []string{"v"},
+						Usage:   "increase verbosity",
+					},
+				},
+				Action: compress,
+			},
 			{
 				Name:        "decompress",
 				Usage:       "Decompress RVZ image",

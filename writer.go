@@ -9,12 +9,21 @@ import (
 
 	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/util"
+	"github.com/bodgit/rvz/internal/zstd"
 )
 
 const (
 	// DefaultChunkSize is the chunk size used by Compress unless
 	// WithChunkSize is given.
-	DefaultChunkSize = 128 << 10 // 128 KiB
+	DefaultChunkSize = ChunkSize128KiB
+
+	// DefaultMethod is the compression method used by Compress unless
+	// WithCompression is given, which matches Dolphin.
+	DefaultMethod = MethodZstandard
+
+	// DefaultLevel is the compression level used by Compress unless
+	// WithCompression is given, which matches Dolphin.
+	DefaultLevel = 5
 
 	gameCubeMagicOffset        = 0x1c
 	gameCubeMagic       uint32 = 0xc2339f3d
@@ -24,26 +33,66 @@ const (
 
 type options struct {
 	chunkSize int
+	method    uint32
+	level     int
 }
 
 // An Option configures how Compress creates an RVZ image.
 type Option func(*options)
 
-// WithChunkSize sets the size of each chunk the disc image is split into.
-// It must be a power of two between 32 KiB and 2 MiB. Smaller chunks make
-// random access faster but compress less well.
+// WithChunkSize sets the size of each chunk the disc image is split into,
+// which must be one of the ChunkSize constants. Smaller chunks make random
+// access faster but compress less well.
 func WithChunkSize(n int) Option {
 	return func(o *options) {
 		o.chunkSize = n
 	}
 }
 
+// WithCompression sets the compression method and level. Only MethodNone
+// and MethodZstandard are supported, with levels from 1 to 22 for the
+// latter. The level is ignored for MethodNone.
+func WithCompression(method uint32, level int) Option {
+	return func(o *options) {
+		o.method, o.level = method, level
+	}
+}
+
 func (o *options) validate() error {
-	if o.chunkSize < util.SectorSize || o.chunkSize > groupSize || o.chunkSize&(o.chunkSize-1) != 0 {
+	if !validChunkSize(o.chunkSize) {
 		return errBadChunkSize
 	}
 
+	switch o.method {
+	case MethodNone:
+		o.level = 0
+	case MethodZstandard:
+		if o.level < zstd.MinLevel || o.level > zstd.MaxLevel {
+			return errBadCompressionLevel
+		}
+	default:
+		return errUnsupportedAlgorithm
+	}
+
 	return nil
+}
+
+// A compressFunc appends src compressed to dst.
+type compressFunc func(dst, src []byte) []byte
+
+// compressor returns the function used to compress each group and table,
+// or nil when nothing is compressed, along with a function to release it.
+func (o *options) compressor() (compressFunc, func() error, error) {
+	if o.method != MethodZstandard {
+		return nil, func() error { return nil }, nil
+	}
+
+	c, err := zstd.NewCompressor(o.level)
+	if err != nil {
+		return nil, nil, fmt.Errorf("rvz: %w", err)
+	}
+
+	return c.Compress, c.Close, nil
 }
 
 // A writer holds the state of a single conversion.
@@ -58,6 +107,9 @@ type writer struct {
 	raw    []raw
 	group  []group
 
+	compress compressFunc
+	buf      []byte
+
 	written int64
 }
 
@@ -71,6 +123,8 @@ func Compress(w io.WriteSeeker, ra io.ReaderAt, size int64, opts ...Option) erro
 		size: size,
 		opts: options{
 			chunkSize: DefaultChunkSize,
+			method:    DefaultMethod,
+			level:     DefaultLevel,
 		},
 	}
 
@@ -82,10 +136,23 @@ func Compress(w io.WriteSeeker, ra io.ReaderAt, size int64, opts ...Option) erro
 		return err
 	}
 
-	return cw.compress()
+	compress, closeFunc, err := cw.opts.compressor()
+	if err != nil {
+		return err
+	}
+
+	cw.compress = compress
+
+	if err := cw.convert(); err != nil {
+		_ = closeFunc()
+
+		return err
+	}
+
+	return closeFunc()
 }
 
-func (cw *writer) compress() error {
+func (cw *writer) convert() error {
 	if err := cw.setUpDisc(); err != nil {
 		return err
 	}
@@ -128,6 +195,8 @@ func (cw *writer) setUpDisc() error {
 		return errInvalidDiscType
 	}
 
+	cw.disc.Compression = cw.opts.method
+	cw.disc.ComprLevel = int32(cw.opts.level)     //nolint:gosec // validated by options
 	cw.disc.ChunkSize = uint32(cw.opts.chunkSize) //nolint:gosec // validated by options
 
 	return nil
@@ -175,10 +244,17 @@ func (cw *writer) groups() int {
 }
 
 // tablesSize returns the space reserved for the headers and tables, which
-// is rounded up to a whole sector as Dolphin does.
+// is rounded up to a whole sector. As Dolphin does, a compressed group table
+// is assumed to be at most 9/16 of its original size, and some room is
+// allowed for the compression overhead of the raw data table.
 func (cw *writer) tablesSize() int64 {
+	groups := int64(len(cw.group) * binary.Size(group{}))
+	if cw.compress != nil {
+		groups = groups * 9 / 16
+	}
+
 	n := int64(binary.Size(cw.header)) + int64(binary.Size(cw.disc)) +
-		int64(len(cw.raw)*binary.Size(raw{})) + int64(len(cw.group)*binary.Size(group{}))
+		int64(len(cw.raw)*binary.Size(raw{})) + 0x100 + groups
 
 	return (n + util.SectorSize - 1) / util.SectorSize * util.SectorSize
 }
@@ -204,12 +280,23 @@ func (cw *writer) writeRaw(x *raw) error {
 	return nil
 }
 
-// writeGroup writes the data for a group, recording where it is, and pads it
-// to the next 4 byte boundary.
+// writeGroup writes the data for a group, compressed if that makes it
+// smaller, recording where it is, and pads it to the next 4 byte boundary.
 func (cw *writer) writeGroup(g int, b []byte) error {
+	size := uint32(len(b)) //nolint:gosec // at most 2 MiB
+
+	if cw.compress != nil {
+		cw.buf = cw.compress(cw.buf[:0], b)
+
+		if len(cw.buf) < len(b) {
+			b = cw.buf
+			size = uint32(len(b)) | compressed //nolint:gosec // smaller than the chunk
+		}
+	}
+
 	cw.group[g] = group{
 		Offset: uint32(cw.written >> 2), //nolint:gosec // checked below
-		Size:   uint32(len(b)),          //nolint:gosec // at most 2 MiB
+		Size:   size,
 	}
 
 	if cw.written>>2 > int64(^uint32(0)) {
@@ -230,6 +317,16 @@ func (cw *writer) writeTables(reserved int64) error {
 
 	_ = binary.Write(&raws, binary.BigEndian, cw.raw)
 	_ = binary.Write(&groups, binary.BigEndian, cw.group)
+
+	// The tables are always compressed, even if that makes them larger
+	if cw.compress != nil {
+		r, g := cw.compress(nil, raws.Bytes()), cw.compress(nil, groups.Bytes())
+
+		raws.Reset()
+		raws.Write(r)
+		groups.Reset()
+		groups.Write(g)
+	}
 
 	end := cw.written
 	offset := int64(binary.Size(cw.header)) + int64(binary.Size(cw.disc))
