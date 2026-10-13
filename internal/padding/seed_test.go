@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/bodgit/rvz/internal/padding"
+	"github.com/bodgit/rvz/internal/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,13 +38,13 @@ func TestSeed(t *testing.T) {
 		name      string
 		offset, n int
 	}{
-		{"start of sector", 0, sectorSize},
+		{"start of sector", 0, util.SectorSize},
 		{"one block", 0, bufferSize * 4},
-		{"word aligned", 0x1234, sectorSize - 0x1234},
-		{"not word aligned", 0x1235, sectorSize - 0x1235},
+		{"word aligned", 0x1234, util.SectorSize - 0x1234},
+		{"not word aligned", 0x1235, util.SectorSize - 0x1235},
 		{"end of block", bufferSize*4 - 1, 3 * bufferSize * 4},
-		{"near end of sector", sectorSize - 3*bufferSize*4 - 2, 3*bufferSize*4 + 2},
-		{"later sector", 3*sectorSize + 777, 5000},
+		{"near end of sector", util.SectorSize - 3*bufferSize*4 - 2, 3*bufferSize*4 + 2},
+		{"later sector", 3*util.SectorSize + 777, 5000},
 	}
 
 	for _, table := range tables {
@@ -81,8 +82,8 @@ func TestSeedPartial(t *testing.T) {
 func TestSeedZeroes(t *testing.T) {
 	t.Parallel()
 
-	seed, n := padding.Seed(make([]byte, sectorSize), 0)
-	assert.Equal(t, sectorSize, n)
+	seed, n := padding.Seed(make([]byte, util.SectorSize), 0)
+	assert.Equal(t, util.SectorSize, n)
 	assert.Equal(t, [padding.SeedSize]byte{}, seed)
 }
 
@@ -92,7 +93,7 @@ func TestSeedNotPadding(t *testing.T) {
 	//nolint:gosec // reproducible test data
 	r := rand.New(rand.NewPCG(3, 4))
 
-	random := make([]byte, sectorSize)
+	random := make([]byte, util.SectorSize)
 	for i := range random {
 		random[i] = byte(0xff & r.Uint32())
 	}

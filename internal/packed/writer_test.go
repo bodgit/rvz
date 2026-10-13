@@ -8,11 +8,10 @@ import (
 
 	"github.com/bodgit/rvz/internal/packed"
 	"github.com/bodgit/rvz/internal/padding"
+	"github.com/bodgit/rvz/internal/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-const sectorSize = 0x8000
 
 // sectorPadding returns the padding from the seed for the sector starting at
 // offset, after skipping some bytes.
@@ -26,7 +25,7 @@ func sectorPadding(t *testing.T, offset int64, skip int) []byte {
 		_ = rc.Close()
 	}()
 
-	b := make([]byte, sectorSize-skip)
+	b := make([]byte, util.SectorSize-skip)
 	_, err = io.ReadFull(rc, b)
 	require.NoError(t, err)
 
@@ -60,15 +59,15 @@ func unpack(t *testing.T, b []byte, offset int64) []byte {
 func TestPack(t *testing.T) {
 	t.Parallel()
 
-	const offset = 5 * sectorSize
+	const offset = 5 * util.SectorSize
 
 	// A sector of zeroes then padding, a sector of data, and a sector
 	// of padding cut short
-	chunk := make([]byte, 0, 3*sectorSize)
+	chunk := make([]byte, 0, 3*util.SectorSize)
 	chunk = append(chunk, make([]byte, 20)...)
 	chunk = append(chunk, sectorPadding(t, offset, 20)...)
-	chunk = append(chunk, randomBytes(sectorSize)...)
-	chunk = append(chunk, sectorPadding(t, offset+2*sectorSize, 0)[:sectorSize/2]...)
+	chunk = append(chunk, randomBytes(util.SectorSize)...)
+	chunk = append(chunk, sectorPadding(t, offset+2*util.SectorSize, 0)[:util.SectorSize/2]...)
 
 	tables := []struct {
 		name        string
@@ -77,11 +76,11 @@ func TestPack(t *testing.T) {
 		ok          bool
 		max         int
 	}{
-		{"padding", chunk, true, true, sectorSize + 1000},
-		{"padding without compression", chunk, false, true, sectorSize + 1000},
-		{"no padding", randomBytes(sectorSize), true, false, 0},
-		{"zeroes", make([]byte, sectorSize), true, false, 0},
-		{"zeroes without compression", make([]byte, sectorSize), false, true, 100},
+		{"padding", chunk, true, true, util.SectorSize + 1000},
+		{"padding without compression", chunk, false, true, util.SectorSize + 1000},
+		{"no padding", randomBytes(util.SectorSize), true, false, 0},
+		{"zeroes", make([]byte, util.SectorSize), true, false, 0},
+		{"zeroes without compression", make([]byte, util.SectorSize), false, true, 100},
 		{"short", chunk[:50], false, false, 0},
 	}
 
@@ -135,7 +134,7 @@ func TestPackAfterFile(t *testing.T) {
 	t.Parallel()
 
 	const (
-		offset  = 7 * sectorSize
+		offset  = 7 * util.SectorSize
 		fileEnd = 0x1003
 		zeroes  = 13
 	)

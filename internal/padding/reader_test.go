@@ -8,6 +8,7 @@ import (
 	"testing/iotest"
 
 	"github.com/bodgit/rvz/internal/padding"
+	"github.com/bodgit/rvz/internal/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +16,6 @@ import (
 const (
 	seedSize   = 17
 	bufferSize = 521
-	sectorSize = 0x8000
 )
 
 func seed() []byte {
@@ -64,9 +64,9 @@ func reference(t *testing.T, n int) []byte {
 func TestReadCloser(t *testing.T) {
 	t.Parallel()
 
-	const size = 3 * sectorSize
+	const size = 3 * util.SectorSize
 
-	want := reference(t, sectorSize+size)
+	want := reference(t, util.SectorSize+size)
 
 	tables := []struct {
 		name   string
@@ -76,8 +76,8 @@ func TestReadCloser(t *testing.T) {
 		{"start", 0, func(r io.Reader) io.Reader { return r }},
 		{"part way", 12345, func(r io.Reader) io.Reader { return r }},
 		{"end of block", bufferSize * 4, func(r io.Reader) io.Reader { return r }},
-		{"end of sector", sectorSize - 1, func(r io.Reader) io.Reader { return r }},
-		{"next sector", 5*sectorSize + 999, func(r io.Reader) io.Reader { return r }},
+		{"end of sector", util.SectorSize - 1, func(r io.Reader) io.Reader { return r }},
+		{"next sector", 5*util.SectorSize + 999, func(r io.Reader) io.Reader { return r }},
 		{"one byte at a time", 777, iotest.OneByteReader},
 		{"half reads", 2083, iotest.HalfReader},
 	}
@@ -93,7 +93,7 @@ func TestReadCloser(t *testing.T) {
 			_, err = io.ReadFull(table.wrap(rc), got)
 			require.NoError(t, err)
 
-			start := table.offset % sectorSize
+			start := table.offset % util.SectorSize
 			assert.True(t, bytes.Equal(want[start:start+size], got), "padding doesn't match")
 			assert.NoError(t, rc.Close())
 		})
@@ -110,7 +110,7 @@ func TestReadCloserShortSeed(t *testing.T) {
 func BenchmarkReadCloser(b *testing.B) {
 	buf := make([]byte, 0x400)
 
-	b.SetBytes(sectorSize)
+	b.SetBytes(util.SectorSize)
 
 	for b.Loop() {
 		rc, err := padding.NewReadCloser(bytes.NewReader(seed()), 0)
@@ -118,7 +118,7 @@ func BenchmarkReadCloser(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		for range sectorSize / len(buf) {
+		for range util.SectorSize / len(buf) {
 			if _, err := io.ReadFull(rc, buf); err != nil {
 				b.Fatal(err)
 			}

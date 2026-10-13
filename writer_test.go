@@ -11,11 +11,10 @@ import (
 
 	"github.com/bodgit/rvz"
 	"github.com/bodgit/rvz/internal/padding"
+	"github.com/bodgit/rvz/internal/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-const sectorSize = 0x8000
 
 // testDisc returns a disc image of size bytes that is recognised as a
 // GameCube or Wii disc. Every other sector is filled with random data and
@@ -27,7 +26,7 @@ func testDisc(size int, wii bool) []byte {
 	r := rand.New(rand.NewPCG(1, 2))
 
 	for i := range b {
-		if i/sectorSize%2 == 0 {
+		if i/util.SectorSize%2 == 0 {
 			b[i] = byte(0xff & r.Uint32())
 		} else {
 			b[i] = byte(i % 251)
@@ -92,16 +91,16 @@ func TestCompress(t *testing.T) {
 		wii  bool
 		opts []rvz.Option
 	}{
-		{"GameCube", 4 * sectorSize, false, nil},
-		{"Wii", 4 * sectorSize, true, nil},
-		{"short last group", 5*sectorSize + 0x1234, false, []rvz.Option{rvz.WithChunkSize(rvz.ChunkSize64KiB)}},
-		{"smallest chunks", 3 * sectorSize, false, []rvz.Option{rvz.WithChunkSize(rvz.ChunkSize32KiB)}},
-		{"largest chunks", 3 * sectorSize, true, []rvz.Option{rvz.WithChunkSize(rvz.ChunkSize2MiB)}},
+		{"GameCube", 4 * util.SectorSize, false, nil},
+		{"Wii", 4 * util.SectorSize, true, nil},
+		{"short last group", 5*util.SectorSize + 0x1234, false, []rvz.Option{rvz.WithChunkSize(rvz.ChunkSize64KiB)}},
+		{"smallest chunks", 3 * util.SectorSize, false, []rvz.Option{rvz.WithChunkSize(rvz.ChunkSize32KiB)}},
+		{"largest chunks", 3 * util.SectorSize, true, []rvz.Option{rvz.WithChunkSize(rvz.ChunkSize2MiB)}},
 		{"within first sector", 0x1000, false, nil},
-		{"no compression", 4 * sectorSize, false, []rvz.Option{rvz.WithCompression(rvz.MethodNone, 0)}},
-		{"fastest", 4 * sectorSize, true, []rvz.Option{rvz.WithCompression(rvz.MethodZstandard, 1)}},
-		{"best", 4 * sectorSize, false, []rvz.Option{rvz.WithCompression(rvz.MethodZstandard, 22)}},
-		{"compressed groups", 64 * sectorSize, false, []rvz.Option{rvz.WithChunkSize(rvz.ChunkSize32KiB)}},
+		{"no compression", 4 * util.SectorSize, false, []rvz.Option{rvz.WithCompression(rvz.MethodNone, 0)}},
+		{"fastest", 4 * util.SectorSize, true, []rvz.Option{rvz.WithCompression(rvz.MethodZstandard, 1)}},
+		{"best", 4 * util.SectorSize, false, []rvz.Option{rvz.WithCompression(rvz.MethodZstandard, 22)}},
+		{"compressed groups", 64 * util.SectorSize, false, []rvz.Option{rvz.WithChunkSize(rvz.ChunkSize32KiB)}},
 	}
 
 	for _, table := range tables {
@@ -124,7 +123,7 @@ func TestCompress(t *testing.T) {
 func TestCompressSize(t *testing.T) {
 	t.Parallel()
 
-	const size = 64 * sectorSize
+	const size = 64 * util.SectorSize
 
 	tables := []struct {
 		name     string
@@ -157,14 +156,14 @@ func TestCompressReuse(t *testing.T) {
 
 	// Random, zero, 0xff, zero, 0xff, random and then half a sector of
 	// 0xff, which can't reuse the earlier groups as it's shorter
-	iso := testDisc(6*sectorSize+sectorSize/2, false)
+	iso := testDisc(6*util.SectorSize+util.SectorSize/2, false)
 
 	for _, i := range []int{1, 3} {
-		clear(iso[i*sectorSize : (i+1)*sectorSize])
+		clear(iso[i*util.SectorSize : (i+1)*util.SectorSize])
 	}
 
 	for _, i := range []int{2, 4, 6} {
-		copy(iso[i*sectorSize:], bytes.Repeat([]byte{0xff}, sectorSize))
+		copy(iso[i*util.SectorSize:], bytes.Repeat([]byte{0xff}, util.SectorSize))
 	}
 
 	path, err := compress(t, iso, rvz.WithChunkSize(rvz.ChunkSize32KiB), rvz.WithCompression(rvz.MethodNone, 0))
@@ -177,7 +176,7 @@ func TestCompressReuse(t *testing.T) {
 	// sector of 0xff and the half sector of 0xff
 	fi, err := os.Stat(path)
 	require.NoError(t, err)
-	assert.Equal(t, int64(4*sectorSize+sectorSize/2), fi.Size())
+	assert.Equal(t, int64(4*util.SectorSize+util.SectorSize/2), fi.Size())
 }
 
 // TestCompressPadding checks that padding is stored as seeds, so a disc that
@@ -189,17 +188,17 @@ func TestCompressPadding(t *testing.T) {
 
 	// The first sector is the disc header, then each sector is padding
 	// generated from its own seed after a few zeroes
-	iso := testDisc(sectors*sectorSize, false)
+	iso := testDisc(sectors*util.SectorSize, false)
 
 	for i := 1; i < sectors; i++ {
 		seed := testDisc(padding.SeedSize+0x20, false)[0x20:]
 		skip := i % 3 * 12
 
-		rc, err := padding.NewReadCloser(bytes.NewReader(seed), int64(i*sectorSize+skip))
+		rc, err := padding.NewReadCloser(bytes.NewReader(seed), int64(i*util.SectorSize+skip))
 		require.NoError(t, err)
 
-		clear(iso[i*sectorSize : i*sectorSize+skip])
-		_, err = io.ReadFull(rc, iso[i*sectorSize+skip:(i+1)*sectorSize])
+		clear(iso[i*util.SectorSize : i*util.SectorSize+skip])
+		_, err = io.ReadFull(rc, iso[i*util.SectorSize+skip:(i+1)*util.SectorSize])
 		require.NoError(t, err)
 		require.NoError(t, rc.Close())
 	}
@@ -214,7 +213,7 @@ func TestCompressPadding(t *testing.T) {
 		// for each other sector
 		fi, err := os.Stat(path)
 		require.NoError(t, err)
-		assert.Less(t, fi.Size(), int64(2*sectorSize+sectors*100))
+		assert.Less(t, fi.Size(), int64(2*util.SectorSize+sectors*100))
 	}
 }
 
@@ -226,15 +225,19 @@ func TestCompressErrors(t *testing.T) {
 		iso  []byte
 		opts []rvz.Option
 	}{
-		{"not a disc", make([]byte, sectorSize), nil},
+		{"not a disc", make([]byte, util.SectorSize), nil},
 		{"too small", testDisc(0x80, false)[:0x7f], nil},
-		{"chunk size too small", testDisc(sectorSize, false), []rvz.Option{rvz.WithChunkSize(sectorSize / 2)}},
-		{"chunk size too large", testDisc(sectorSize, false), []rvz.Option{rvz.WithChunkSize(128 * sectorSize)}},
-		{"chunk size not a power of two", testDisc(sectorSize, false), []rvz.Option{rvz.WithChunkSize(3 * sectorSize)}},
-		{"level too low", testDisc(sectorSize, false), []rvz.Option{rvz.WithCompression(rvz.MethodZstandard, 0)}},
-		{"level too high", testDisc(sectorSize, false), []rvz.Option{rvz.WithCompression(rvz.MethodZstandard, 23)}},
-		{"unsupported method", testDisc(sectorSize, false), []rvz.Option{rvz.WithCompression(rvz.MethodBzip2, 9)}},
-		{"purge", testDisc(sectorSize, false), []rvz.Option{rvz.WithCompression(rvz.MethodPurge, 0)}},
+		{"chunk size too small", testDisc(util.SectorSize, false), []rvz.Option{rvz.WithChunkSize(util.SectorSize / 2)}},
+		{"chunk size too large", testDisc(util.SectorSize, false), []rvz.Option{rvz.WithChunkSize(128 * util.SectorSize)}},
+		{
+			"chunk size not a power of two",
+			testDisc(util.SectorSize, false),
+			[]rvz.Option{rvz.WithChunkSize(3 * util.SectorSize)},
+		},
+		{"level too low", testDisc(util.SectorSize, false), []rvz.Option{rvz.WithCompression(rvz.MethodZstandard, 0)}},
+		{"level too high", testDisc(util.SectorSize, false), []rvz.Option{rvz.WithCompression(rvz.MethodZstandard, 23)}},
+		{"unsupported method", testDisc(util.SectorSize, false), []rvz.Option{rvz.WithCompression(rvz.MethodBzip2, 9)}},
+		{"purge", testDisc(util.SectorSize, false), []rvz.Option{rvz.WithCompression(rvz.MethodPurge, 0)}},
 	}
 
 	for _, table := range tables {
