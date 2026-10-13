@@ -3,6 +3,7 @@ package rvz_test
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"io"
 	"math/rand/v2"
 	"os"
@@ -278,7 +279,7 @@ func TestRoundTrip(t *testing.T) {
 			f, err := os.Create(path) //nolint:gosec // temporary file
 			require.NoError(t, err)
 
-			require.NoError(t, rvz.Compress(f, iso, fi.Size()))
+			require.NoError(t, rvz.Compress(f, iso, fi.Size(), keyOptions(t)...))
 
 			out, err := f.Stat()
 			require.NoError(t, err)
@@ -289,6 +290,34 @@ func TestRoundTrip(t *testing.T) {
 			assert.Equal(t, redumpSHA1(t, disc.dat, disc.file), readSHA1(t, path))
 		})
 	}
+}
+
+// keyOptions returns options for any Wii common keys set in the environment
+// as hex, so Wii partitions can be compressed. Without them, partitions are
+// stored as raw data.
+func keyOptions(t *testing.T) []rvz.Option {
+	t.Helper()
+
+	var opts []rvz.Option
+
+	for index, name := range []string{"RVZ_COMMON_KEY", "RVZ_KOREAN_KEY", "RVZ_VWII_KEY"} {
+		s := os.Getenv(name)
+		if s == "" {
+			continue
+		}
+
+		b, err := hex.DecodeString(s)
+		require.NoError(t, err, name)
+
+		var key [16]byte
+
+		require.Len(t, b, len(key), name)
+		copy(key[:], b)
+
+		opts = append(opts, rvz.WithCommonKey(index, key))
+	}
+
+	return opts
 }
 
 // decompressTo decompresses the RVZ image at src to dst, returning dst

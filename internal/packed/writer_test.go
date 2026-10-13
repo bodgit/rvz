@@ -153,3 +153,34 @@ func TestPackAfterFile(t *testing.T) {
 	assert.Less(t, len(b), fileEnd+zeroes+200)
 	assert.True(t, bytes.Equal(chunk, unpack(t, b, offset)), "unpacked data doesn't match")
 }
+
+// TestPackPieces checks padding found across a whole buffer is used when
+// packing pieces of it, including a piece that starts part way through a
+// run of padding.
+func TestPackPieces(t *testing.T) {
+	t.Parallel()
+
+	const (
+		offset = 3 * util.SectorSize
+		// Too little padding is left after this to find a seed from
+		split = util.SectorSize - 1000
+	)
+
+	src := append(randomBytes(util.SectorSize), sectorPadding(t, offset+util.SectorSize, 0)...)
+	j := packed.Find(src, offset, true, nil)
+
+	got := make([]byte, 0, len(src))
+
+	for _, r := range [][2]int{{0, util.SectorSize + split}, {util.SectorSize + split, len(src)}} {
+		b, ok := j.Pack(nil, src, r[0], r[1])
+		require.True(t, ok, "piece %v not packed", r)
+
+		got = append(got, unpack(t, b, offset+int64(r[0]))...)
+	}
+
+	assert.True(t, bytes.Equal(src, got), "unpacked pieces don't match")
+
+	// On its own, the second piece is too short to find a seed from
+	_, ok := packed.Pack(nil, src[util.SectorSize+split:], offset+util.SectorSize+split, true, nil)
+	assert.False(t, ok)
+}

@@ -28,13 +28,14 @@ var (
 // Files holds where each file on the disc is.
 type Files struct {
 	start, end []int64 // sorted by end
+	tableEnd   int64
 }
 
 // Read reads the file system table from ra, which is either a GameCube disc
 // or the decrypted data of a Wii partition. File offsets are shifted left
 // by shift, which is 0 for GameCube and 2 for Wii.
 func Read(ra io.ReaderAt, shift uint) (*Files, error) {
-	b, err := readTable(ra, shift)
+	b, tableEnd, err := readTable(ra, shift)
 	if err != nil {
 		return nil, err
 	}
@@ -50,28 +51,32 @@ func Read(ra io.ReaderAt, shift uint) (*Files, error) {
 		return nil, errBadCount
 	}
 
-	return index(b[:n*entrySize], shift), nil
+	f := index(b[:n*entrySize], shift)
+	f.tableEnd = tableEnd
+
+	return f, nil
 }
 
-func readTable(ra io.ReaderAt, shift uint) ([]byte, error) {
+// readTable returns the file system table and where it ends.
+func readTable(ra io.ReaderAt, shift uint) ([]byte, int64, error) {
 	var header [8]byte
 	if _, err := ra.ReadAt(header[:], headerOffset); err != nil {
-		return nil, fmt.Errorf("fst: reading header: %w", err)
+		return nil, 0, fmt.Errorf("fst: reading header: %w", err)
 	}
 
 	offset := int64(binary.BigEndian.Uint32(header[0:])) << shift
 	size := int64(binary.BigEndian.Uint32(header[4:])) << shift
 
 	if size < entrySize || size > maxSize {
-		return nil, errBadSize
+		return nil, 0, errBadSize
 	}
 
 	b := make([]byte, size)
 	if _, err := ra.ReadAt(b, offset); err != nil {
-		return nil, fmt.Errorf("fst: reading table: %w", err)
+		return nil, 0, fmt.Errorf("fst: reading table: %w", err)
 	}
 
-	return b, nil
+	return b, offset + size, nil
 }
 
 // index builds the sorted list of where each file starts and ends from the
@@ -110,6 +115,11 @@ func index(b []byte, shift uint) *Files {
 	}
 
 	return f
+}
+
+// TableEnd returns where the file system table itself ends.
+func (f *Files) TableEnd() int64 {
+	return f.tableEnd
 }
 
 // End returns where the file containing offset ends, if there is one.

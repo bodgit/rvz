@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -23,7 +24,20 @@ var (
 	errISOExtension     = errors.New("source file already has " + isoExtension + " extension")
 	errRVZExtension     = errors.New("source file already has " + rvz.Extension + " extension")
 	errUnknownAlgorithm = errors.New("unknown compression algorithm")
+	errBadKey           = errors.New("key must be 32 hexadecimal digits")
 )
+
+// keyFlags are the flags for each Wii common key, in the order of their
+// index.
+//
+//nolint:gochecknoglobals
+var keyFlags = []struct {
+	name, env, usage string
+}{
+	{"common-key", "RVZ_COMMON_KEY", "Wii common key"},
+	{"korean-key", "RVZ_KOREAN_KEY", "Wii Korean common key"},
+	{"vwii-key", "RVZ_VWII_KEY", "vWii common key"},
+}
 
 //nolint:gochecknoglobals
 var methods = map[string]uint32{
@@ -130,6 +144,20 @@ func compress(ctx context.Context, cmd *cli.Command) error {
 		rvz.WithChunkSize(cmd.Int("chunk-size")),
 	}
 
+	for index, flag := range keyFlags {
+		s := cmd.String(flag.name)
+		if s == "" {
+			continue
+		}
+
+		key, err := parseKey(s)
+		if err != nil {
+			return fmt.Errorf("%w: --%s", err, flag.name)
+		}
+
+		opts = append(opts, rvz.WithCommonKey(index, key))
+	}
+
 	return compressFile(src, dst, cmd.Bool("verbose"), opts...)
 }
 
@@ -187,6 +215,35 @@ func compressFile(src, dst string, verbose bool, opts ...rvz.Option) (err error)
 	return nil
 }
 
+func parseKey(s string) ([16]byte, error) {
+	var key [16]byte
+
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != len(key) {
+		return key, errBadKey
+	}
+
+	copy(key[:], b)
+
+	return key, nil
+}
+
+// keyFlagsList returns a flag for each Wii common key, which can also be set
+// from the environment.
+func keyFlagsList() []cli.Flag {
+	flags := make([]cli.Flag, 0, len(keyFlags))
+
+	for _, flag := range keyFlags {
+		flags = append(flags, &cli.StringFlag{
+			Name:    flag.name,
+			Usage:   flag.usage + " as hexadecimal, needed to compress Wii partitions",
+			Sources: cli.EnvVars(flag.env),
+		})
+	}
+
+	return flags
+}
+
 func main() {
 	cmd := &cli.Command{
 		Name:    "rvz",
@@ -198,7 +255,7 @@ func main() {
 				Usage:       "Compress ISO image",
 				Description: "Compress ISO image",
 				ArgsUsage:   "SOURCE [TARGET]",
-				Flags: []cli.Flag{
+				Flags: append([]cli.Flag{
 					&cli.StringFlag{
 						Name:    "compression",
 						Aliases: []string{"c"},
@@ -222,7 +279,7 @@ func main() {
 						Aliases: []string{"v"},
 						Usage:   "increase verbosity",
 					},
-				},
+				}, keyFlagsList()...),
 				Action: compress,
 			},
 			{

@@ -4,6 +4,7 @@ import "errors"
 
 var (
 	errBadChunkSize          = errors.New("rvz: bad chunk size")
+	errBadCommonKeyIndex     = errors.New("rvz: bad common key index")
 	errBadCompressionLevel   = errors.New("rvz: bad compression level")
 	errBadComprDataLen       = errors.New("rvz: bad compressor data length")
 	errBadDiscSize           = errors.New("rvz: bad disc size")

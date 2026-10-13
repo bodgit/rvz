@@ -81,6 +81,8 @@ func TestEnd(t *testing.T) {
 			f, err := fst.Read(bytes.NewReader(disc(entries, table.shift)), table.shift)
 			require.NoError(t, err)
 
+			assert.Equal(t, int64(0x1000+(len(entries)+1)*12), f.TableEnd())
+
 			end, ok := f.End(table.offset)
 			assert.Equal(t, table.ok, ok)
 			assert.Equal(t, table.end, end)
