@@ -303,68 +303,75 @@ var hashAreas = [][2]int{
 	{h2Offset + h2Size, h2Padding},
 }
 
-// writePartData stores data area d of partition p. Each 2 MiB block is
-// decrypted and its hashes recalculated, with any that don't match the
-// originals stored as hash exceptions in the group for the chunk.
-func (cw *writer) writePartData(p, d int) error {
+// partDataJobs returns the jobs for data area d of partition p, one for
+// each 2 MiB block.
+func (cw *writer) partDataJobs(p, d int) []job {
 	wp := cw.wii[p]
 	pd := wp.part.Data[d]
-	spc := cw.opts.chunkSize / util.SectorSize // sectors per chunk
 
-	var (
-		enc    = make([]byte, groupSize)
-		buf    = make([]byte, groupSize) // decrypted, hashes recalculated
-		hashes = make([]byte, clusters*hashSize)
-		data   = make([]byte, clusters*sectorDataSize)
-	)
+	jobs := make([]job, 0, ceilDiv(uint64(pd.NumSector), clusters))
 
 	for first := 0; first < int(pd.NumSector); first += clusters {
-		sectors := min(clusters, int(pd.NumSector)-first)
-		sector := int64(pd.FirstSector) + int64(first)
-
-		if _, err := cw.ra.ReadAt(enc[:sectors*util.SectorSize], sector*util.SectorSize); err != nil {
-			return fmt.Errorf("rvz: reading disc image: %w", err)
-		}
-
-		// Sectors beyond the end are zeroes when recalculating hashes
-		clear(buf)
-
-		for s := range sectors {
-			decryptSector(wp.block, enc[s*util.SectorSize:(s+1)*util.SectorSize],
-				hashes[s*hashSize:(s+1)*hashSize], buf[s*util.SectorSize+hashSize:(s+1)*util.SectorSize])
-			copy(data[s*sectorDataSize:], buf[s*util.SectorSize+hashSize:(s+1)*util.SectorSize])
-		}
-
-		writeHashes(buf)
-
-		// Padding is generated relative to the start of the partition
-		// data, not this data area
-		offset := (sector - int64(wp.part.Data[0].FirstSector)) * sectorDataSize
-		b := data[:sectors*sectorDataSize]
-		junk := packed.Find(b, offset, cw.compress != nil, wp.files)
-
-		for c := 0; c*spc < sectors; c++ {
-			start, end := c*spc, min((c+1)*spc, sectors)
-
-			exceptions := hashExceptions(buf, hashes, start, end)
-
-			var packedSize uint32
-
-			chunk := b[start*sectorDataSize : end*sectorDataSize]
-			if pb, ok := junk.Pack(cw.packed[:0], b, start*sectorDataSize, end*sectorDataSize); ok {
-				cw.packed = pb
-				chunk = pb
-				packedSize = uint32(len(pb)) //nolint:gosec // a little over 2 MiB
-			}
-
-			g := int(pd.GroupIndex) + (first+start)/spc
-			if err := cw.storeGroup(g, exceptions, chunk, packedSize); err != nil {
-				return err
-			}
-		}
+		jobs = append(jobs, func() ([]prepared, error) {
+			return cw.preparePartData(wp, pd, first)
+		})
 	}
 
-	return nil
+	return jobs
+}
+
+// preparePartData prepares the groups for the 2 MiB block of a partition
+// data area starting with the first sector. The block is decrypted and its
+// hashes recalculated, with any that don't match the originals stored as
+// hash exceptions in the group for each chunk.
+func (cw *writer) preparePartData(wp *wiiPartition, pd partData, first int) ([]prepared, error) {
+	spc := cw.opts.chunkSize / util.SectorSize // sectors per chunk
+	sectors := min(clusters, int(pd.NumSector)-first)
+	sector := int64(pd.FirstSector) + int64(first)
+
+	var (
+		enc    = make([]byte, sectors*util.SectorSize)
+		buf    = make([]byte, groupSize) // decrypted, hashes recalculated
+		hashes = make([]byte, sectors*hashSize)
+		data   = make([]byte, sectors*sectorDataSize)
+	)
+
+	if _, err := cw.ra.ReadAt(enc, sector*util.SectorSize); err != nil {
+		return nil, fmt.Errorf("rvz: reading disc image: %w", err)
+	}
+
+	// Sectors beyond the end are left as zeroes when recalculating hashes
+	for s := range sectors {
+		decryptSector(wp.block, enc[s*util.SectorSize:(s+1)*util.SectorSize],
+			hashes[s*hashSize:(s+1)*hashSize], buf[s*util.SectorSize+hashSize:(s+1)*util.SectorSize])
+		copy(data[s*sectorDataSize:], buf[s*util.SectorSize+hashSize:(s+1)*util.SectorSize])
+	}
+
+	writeHashes(buf)
+
+	// Padding is generated relative to the start of the partition data,
+	// not this data area
+	offset := (sector - int64(wp.part.Data[0].FirstSector)) * sectorDataSize
+	junk := packed.Find(data, offset, cw.compress != nil, wp.files)
+
+	groups := make([]prepared, 0, ceilDiv(uint64(sectors), uint64(spc))) //nolint:gosec // positive
+
+	for c := 0; c*spc < sectors; c++ {
+		start, end := c*spc, min((c+1)*spc, sectors)
+
+		var packedSize uint32
+
+		chunk := data[start*sectorDataSize : end*sectorDataSize]
+		if pb, ok := junk.Pack(nil, data, start*sectorDataSize, end*sectorDataSize); ok {
+			chunk = pb
+			packedSize = uint32(len(pb)) //nolint:gosec // a little over 2 MiB
+		}
+
+		g := int(pd.GroupIndex) + (first+start)/spc
+		groups = append(groups, cw.prepareGroup(g, hashExceptions(buf, hashes, start, end), chunk, packedSize))
+	}
+
+	return groups, nil
 }
 
 // hashExceptions returns the hash exception list for the sectors from start

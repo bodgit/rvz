@@ -22,9 +22,15 @@ type Compressor struct {
 // NewCompressor returns a new Compressor using the zstd compression level,
 // which is mapped to the nearest level the encoder supports.
 func NewCompressor(level int) (*Compressor, error) {
+	// EncodeAll can only run as many times at once as there are
+	// encoders, which defaults to GOMAXPROCS to match the writer.
+	//
+	// Always try entropy coding the literals as libzstd, and so Dolphin,
+	// does. Disc images have a lot of audio and video with few matches but
+	// a skewed distribution of bytes, which otherwise is stored as is
 	enc, err := zstd.NewWriter(nil,
 		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)),
-		zstd.WithEncoderConcurrency(1))
+		zstd.WithAllLitEntropyCompression(true))
 	if err != nil {
 		return nil, fmt.Errorf("zstd: %w", err)
 	}

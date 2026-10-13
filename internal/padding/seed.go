@@ -1,6 +1,7 @@
 package padding
 
 import (
+	"bytes"
 	"encoding/binary"
 
 	"github.com/bodgit/rvz/internal/util"
@@ -118,13 +119,14 @@ func Seed(b []byte, offset int) ([SeedSize]byte, int) {
 
 	offset %= util.SectorSize
 
-	// Only whole words are used to find the seed
+	// Only whole words are used to find the seed, and only one block of
+	// them is needed
 	skip := (4 - offset%4) % 4
-	if skip > len(b) {
+	if len(b)-skip < blockSize {
 		return out, 0
 	}
 
-	words := make([]uint32, (len(b)-skip)/4)
+	words := make([]uint32, maximumSize)
 	for i := range words {
 		words[i] = binary.BigEndian.Uint32(b[skip+i*4:])
 	}
@@ -145,19 +147,38 @@ func Seed(b []byte, offset int) ([SeedSize]byte, int) {
 		s.forward()
 	}
 
-	pos := offset % blockSize
+	return out, s.matches(b, offset%blockSize)
+}
+
+// matches returns how many bytes at the start of b are generated from the
+// state, starting pos bytes into its current block. Each block is generated
+// and compared as a whole.
+func (s *state) matches(b []byte, pos int) int {
+	var block [blockSize]byte
+
 	n := 0
 
-	for n < len(b) && byte(s[pos/4]>>(24-8*(pos%4))) == b[n] { //nolint:gosec // masked by byte
-		n++
-		pos++
-
-		if pos == blockSize {
-			s.forward()
-
-			pos = 0
+	for n < len(b) {
+		for i, w := range s {
+			binary.BigEndian.PutUint32(block[i*4:], w)
 		}
+
+		want := block[pos:min(blockSize, pos+len(b)-n)]
+		got := b[n : n+len(want)]
+
+		if !bytes.Equal(want, got) {
+			for i := range want {
+				if want[i] != got[i] {
+					return n + i
+				}
+			}
+		}
+
+		n += len(want)
+		pos = 0
+
+		s.forward()
 	}
 
-	return out, n
+	return n
 }
