@@ -39,6 +39,12 @@ var discs = []struct {
 		dat:  wii,
 		file: "Mario Kart Wii (USA) (En,Fr,Es)",
 	},
+	{
+		// Uses the Korean common key
+		name: "Korea",
+		dat:  wii,
+		file: "Mario Kart Wii (Korea)",
+	},
 }
 
 // redumpSHA1 returns the SHA-1 of the disc image in the datfile.

@@ -3,7 +3,6 @@ package rvz
 import (
 	"bytes"
 	"crypto/aes"
-	"crypto/cipher"
 	"encoding/binary"
 	"io"
 	"testing"
@@ -69,8 +68,8 @@ func testPartition(t *testing.T, chunkSize uint32, exceptions [][]except) *reade
 	return r
 }
 
-// decryptSector returns the decrypted hash and data areas of a sector.
-func decryptSector(t *testing.T, key [aes.BlockSize]byte, sector []byte) ([]byte, []byte) {
+// decryptTestSector returns the decrypted hash and data areas of a sector.
+func decryptTestSector(t *testing.T, key [aes.BlockSize]byte, sector []byte) ([]byte, []byte) {
 	t.Helper()
 
 	block, err := aes.NewCipher(key[:])
@@ -78,11 +77,8 @@ func decryptSector(t *testing.T, key [aes.BlockSize]byte, sector []byte) ([]byte
 		t.Fatal(err)
 	}
 
-	hashes := make([]byte, hashSize)
-	cipher.NewCBCDecrypter(block, iv).CryptBlocks(hashes, sector[:hashSize])
-
-	data := make([]byte, util.SectorSize-hashSize)
-	cipher.NewCBCDecrypter(block, sector[ivOffset:ivOffset+aes.BlockSize]).CryptBlocks(data, sector[hashSize:])
+	hashes, data := make([]byte, hashSize), make([]byte, sectorDataSize)
+	decryptSector(block, sector, hashes, data)
 
 	return hashes, data
 }
@@ -182,7 +178,7 @@ func TestHashExceptions(t *testing.T) {
 			assert.Len(t, b, testSectors*util.SectorSize)
 
 			for s := range testSectors {
-				hashes, data := decryptSector(t, r.part[0].Key, b[s*util.SectorSize:(s+1)*util.SectorSize])
+				hashes, data := decryptTestSector(t, r.part[0].Key, b[s*util.SectorSize:(s+1)*util.SectorSize])
 
 				g := s / r.disc.sectorsPerChunk()
 				assert.Equal(t, len(data), bytes.Count(data, []byte{fill(g)}), "sector %d data", s)

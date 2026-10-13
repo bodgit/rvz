@@ -34,9 +34,10 @@ const (
 )
 
 type options struct {
-	chunkSize int
-	method    uint32
-	level     int
+	chunkSize  int
+	method     uint32
+	level      int
+	commonKeys map[int][16]byte
 }
 
 // An Option configures how Compress creates an RVZ image.
@@ -63,6 +64,12 @@ func WithCompression(method uint32, level int) Option {
 func (o *options) validate() error {
 	if !validChunkSize(o.chunkSize) {
 		return errBadChunkSize
+	}
+
+	for index := range o.commonKeys {
+		if index < 0 || index >= numCommonKeys {
+			return errBadCommonKeyIndex
+		}
 	}
 
 	switch o.method {
@@ -103,6 +110,14 @@ type reuseKey struct {
 	value byte
 }
 
+// An area is either a raw data area or one of the data areas of a Wii
+// partition, which are stored in the order they appear on the disc.
+type area struct {
+	raw      int // index of the raw data area, or -1 for a partition
+	p, d     int // index of the partition and its data area
+	numGroup int
+}
+
 // A writer holds the state of a single conversion.
 type writer struct {
 	w    io.WriteSeeker
@@ -113,13 +128,16 @@ type writer struct {
 	header header
 	disc   disc
 	raw    []raw
+	wii    []*wiiPartition
 	group  []group
+	areas  []area
 
 	// Where each file on a GameCube disc is, to help find padding
 	files *fst.Files
 
 	compress compressFunc
 	packed   []byte
+	joined   []byte
 	buf      []byte
 
 	// Groups that can be reused by later chunks with the same contents
@@ -182,8 +200,16 @@ func (cw *writer) convert() error {
 		return err
 	}
 
-	for i := range cw.raw {
-		if err := cw.writeRaw(&cw.raw[i]); err != nil {
+	for _, a := range cw.areas {
+		var err error
+
+		if a.raw >= 0 {
+			err = cw.writeRaw(&cw.raw[a.raw])
+		} else {
+			err = cw.writePartData(a.p, a.d)
+		}
+
+		if err != nil {
 			return err
 		}
 	}
@@ -222,10 +248,34 @@ func (cw *writer) setUpDisc() error {
 	return nil
 }
 
-// setUpEntries lays out the disc. For now everything is stored as a single
-// raw data area.
+// setUpEntries lays out the disc. The partitions of a Wii disc are stored
+// as partition data if they can be decrypted, and everything else is stored
+// as raw data.
 func (cw *writer) setUpEntries() {
-	cw.addRaw(0, cw.size)
+	var last int64
+
+	// A disc without hashes or encryption is stored as raw data
+	if cw.disc.DiscType == wii && cw.disc.Header[wiiHashesOffset] == 0 && cw.disc.Header[wiiEncryptionOffset] == 0 {
+		for _, offset := range cw.partitionOffsets() {
+			// Skip overlapping partitions
+			if offset < last {
+				continue
+			}
+
+			p, dataOffset, dataSize, ok := cw.readPartition(offset)
+			if !ok {
+				continue
+			}
+
+			// The gap before the partition and its header are raw data
+			cw.addRaw(last, offset-last)
+			cw.addRaw(offset, dataOffset)
+
+			last = cw.addPartition(p, offset, dataOffset, dataSize)
+		}
+	}
+
+	cw.addRaw(last, cw.size-last)
 
 	cw.group = make([]group, cw.groups())
 }
@@ -244,23 +294,30 @@ func (cw *writer) addRaw(offset, size int64) {
 	}
 
 	aligned := offset - offset%util.SectorSize
+	groups := int(ceilDiv(uint64(offset+size-aligned), uint64(cw.opts.chunkSize))) //nolint:gosec
 
 	cw.raw = append(cw.raw, raw{
-		RawDataOff:  uint64(offset),                                                          //nolint:gosec
-		RawDataSize: uint64(size),                                                            //nolint:gosec
-		GroupIndex:  uint32(cw.groups()),                                                     //nolint:gosec
-		NumGroup:    uint32(ceilDiv(uint64(offset+size-aligned), uint64(cw.opts.chunkSize))), //nolint:gosec
+		RawDataOff:  uint64(offset),      //nolint:gosec
+		RawDataSize: uint64(size),        //nolint:gosec
+		GroupIndex:  uint32(cw.groups()), //nolint:gosec
+		NumGroup:    uint32(groups),      //nolint:gosec
 	})
+
+	cw.areas = append(cw.areas, area{raw: len(cw.raw) - 1, numGroup: groups})
 }
 
 // groups returns the number of groups used so far.
 func (cw *writer) groups() int {
 	n := 0
-	for _, x := range cw.raw {
-		n += int(x.NumGroup)
+	for _, a := range cw.areas {
+		n += a.numGroup
 	}
 
 	return n
+}
+
+func alignUp(x, n int64) int64 {
+	return (x + n - 1) / n * n
 }
 
 // tablesSize returns the space reserved for the headers and tables, which
@@ -273,10 +330,10 @@ func (cw *writer) tablesSize() int64 {
 		groups = groups * 9 / 16
 	}
 
-	n := int64(binary.Size(cw.header)) + int64(binary.Size(cw.disc)) +
+	n := int64(binary.Size(cw.header)) + int64(binary.Size(cw.disc)) + int64(len(cw.wii)*binary.Size(part{})) +
 		int64(len(cw.raw)*binary.Size(raw{})) + 0x100 + groups
 
-	return (n + util.SectorSize - 1) / util.SectorSize * util.SectorSize
+	return alignUp(n, util.SectorSize)
 }
 
 // writeRaw stores each group of a raw data area.
@@ -306,7 +363,7 @@ func (cw *writer) writeRaw(x *raw) error {
 // contents if there is one.
 func (cw *writer) writeGroup(g int, offset int64, b []byte) error {
 	if len(b) == 0 || !bytes.Equal(b[1:], b[:len(b)-1]) {
-		return cw.storeGroup(g, offset, b)
+		return cw.storeRawGroup(g, offset, b)
 	}
 
 	// The offset of an empty group isn't used
@@ -324,7 +381,7 @@ func (cw *writer) writeGroup(g int, offset int64, b []byte) error {
 		return nil
 	}
 
-	if err := cw.storeGroup(g, offset, b); err != nil {
+	if err := cw.storeRawGroup(g, offset, b); err != nil {
 		return err
 	}
 
@@ -335,10 +392,9 @@ func (cw *writer) writeGroup(g int, offset int64, b []byte) error {
 	return nil
 }
 
-// storeGroup writes the data for group g, with any padding replaced by
-// seeds and then compressed if that makes it smaller, recording where it is,
-// and pads it to the next 4 byte boundary.
-func (cw *writer) storeGroup(g int, offset int64, b []byte) error {
+// storeRawGroup writes the data for raw data group g with any padding
+// replaced by seeds.
+func (cw *writer) storeRawGroup(g int, offset int64, b []byte) error {
 	var packedSize uint32
 
 	if p, ok := packed.Pack(cw.packed[:0], b, offset, cw.compress != nil, cw.files); ok {
@@ -347,14 +403,31 @@ func (cw *writer) storeGroup(g int, offset int64, b []byte) error {
 		packedSize = uint32(len(p)) //nolint:gosec // at most a little over 2 MiB
 	}
 
-	size := uint32(len(b)) //nolint:gosec // at most a little over 2 MiB
+	return cw.storeGroup(g, nil, b, packedSize)
+}
+
+// storeGroup writes the data for group g, which is any hash exceptions
+// followed by the data itself, compressed if that makes it smaller. It
+// records where the group is and pads it to the next 4 byte boundary.
+func (cw *writer) storeGroup(g int, exceptions, b []byte, packedSize uint32) error {
+	// Uncompressed, the exceptions are padded so the data starts on a 4
+	// byte boundary
+	padding := int(alignUp(int64(len(exceptions)), 4)) - len(exceptions)
+	parts := [][]byte{exceptions, make([]byte, padding), b}
+	size := uint32(len(exceptions) + padding + len(b)) //nolint:gosec // a little over 2 MiB
 
 	if cw.compress != nil {
-		cw.buf = cw.compress(cw.buf[:0], b)
+		src := b
+		if len(exceptions) > 0 {
+			cw.joined = append(append(cw.joined[:0], exceptions...), b...)
+			src = cw.joined
+		}
 
-		if len(cw.buf) < len(b) {
-			b = cw.buf
-			size = uint32(len(b)) | compressed //nolint:gosec // smaller than the chunk
+		cw.buf = cw.compress(cw.buf[:0], src)
+
+		if len(cw.buf) < int(size) {
+			parts = [][]byte{cw.buf}
+			size = uint32(len(cw.buf)) | compressed //nolint:gosec // smaller than the chunk
 		}
 	}
 
@@ -368,8 +441,10 @@ func (cw *writer) storeGroup(g int, offset int64, b []byte) error {
 		return errFileTooLarge
 	}
 
-	if err := cw.write(b); err != nil {
-		return err
+	for _, part := range parts {
+		if err := cw.write(part); err != nil {
+			return err
+		}
 	}
 
 	return cw.padTo4()
@@ -378,7 +453,11 @@ func (cw *writer) storeGroup(g int, offset int64, b []byte) error {
 // writeTables writes the tables and headers into the space reserved at the
 // start of the file, or at the end if they don't fit.
 func (cw *writer) writeTables(reserved int64) error {
-	var raws, groups bytes.Buffer
+	var parts, raws, groups bytes.Buffer
+
+	for _, p := range cw.wii {
+		_ = binary.Write(&parts, binary.BigEndian, &p.part)
+	}
 
 	_ = binary.Write(&raws, binary.BigEndian, cw.raw)
 	_ = binary.Write(&groups, binary.BigEndian, cw.group)
@@ -396,7 +475,7 @@ func (cw *writer) writeTables(reserved int64) error {
 	end := cw.written
 	offset := int64(binary.Size(cw.header)) + int64(binary.Size(cw.disc))
 
-	if offset+int64(raws.Len()+groups.Len())+8 > reserved {
+	if offset+int64(parts.Len()+raws.Len()+groups.Len())+8 > reserved {
 		offset = end
 	}
 
@@ -406,9 +485,15 @@ func (cw *writer) writeTables(reserved int64) error {
 
 	cw.written = offset
 
-	// There are no partitions yet, so the partition table is empty
-	cw.disc.PartOff = uint64(cw.written) //nolint:gosec
-	cw.disc.PartHash = sha1.Sum(nil)     //nolint:gosec
+	// The partition table is never compressed
+	cw.disc.NumPart = uint32(len(cw.wii))          //nolint:gosec
+	cw.disc.PartSize = uint32(binary.Size(part{})) //nolint:gosec
+	cw.disc.PartOff = uint64(cw.written)           //nolint:gosec
+	cw.disc.PartHash = sha1.Sum(parts.Bytes())     //nolint:gosec
+
+	if err := cw.writePadded(parts.Bytes()); err != nil {
+		return err
+	}
 
 	cw.disc.NumRawData = uint32(len(cw.raw)) //nolint:gosec
 	cw.disc.RawDataOff = uint64(cw.written)  //nolint:gosec

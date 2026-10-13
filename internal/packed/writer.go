@@ -68,33 +68,43 @@ func findJunk(b []byte, offset int64, zeroes bool, files Files) []junk {
 	return found
 }
 
-// Pack appends src packed to dst, where src starts offset bytes into the
-// disc. If compression won't be used, long runs of zeroes are also stored
-// as padding. If files is given, it is used to find padding that follows a
-// file. It returns false if src has no padding worth storing as a seed, in
-// which case src should be stored as is.
-func Pack(dst, src []byte, offset int64, compression bool, files Files) ([]byte, bool) {
-	found := findJunk(src, offset, !compression, files)
+// Junk is the padding found in a buffer, which can then be packed in
+// pieces, as Dolphin does with each 2 MiB block of a Wii partition.
+type Junk struct {
+	runs []junk
+}
 
-	for cur, first := 0, true; cur < len(src); first = false {
-		junkStart, junkEnd := len(src), len(src)
+// Find finds the padding in src, where src starts offset bytes into the
+// disc or partition. If compression won't be used, long runs of zeroes are
+// also treated as padding. If files is given, it is used to find padding
+// that follows a file.
+func Find(src []byte, offset int64, compression bool, files Files) *Junk {
+	return &Junk{runs: findJunk(src, offset, !compression, files)}
+}
+
+// Pack appends src[start:end] packed to dst, where src is the buffer passed
+// to Find. It returns false if that part of src has no padding worth storing
+// as a seed, in which case it should be stored as is.
+func (j *Junk) Pack(dst, src []byte, start, end int) ([]byte, bool) {
+	for cur, first := start, true; cur < end; first = false {
+		junkStart, junkEnd := end, end
 
 		var seed *[padding.SeedSize]byte
 
 		// Find the next run of padding that is worth storing as a seed
-		if len(src)-cur > padding.SeedSize {
-			i := sort.Search(len(found), func(i int) bool {
-				return found[i].end > cur+padding.SeedSize
+		if end-cur > padding.SeedSize {
+			i := sort.Search(len(j.runs), func(i int) bool {
+				return j.runs[i].end > cur+padding.SeedSize
 			})
 
-			if i < len(found) && found[i].start+padding.SeedSize < len(src) {
-				junkStart = max(cur, found[i].start)
-				junkEnd = min(len(src), found[i].end)
-				seed = &found[i].seed
+			if i < len(j.runs) && j.runs[i].start+padding.SeedSize < end {
+				junkStart = max(cur, j.runs[i].start)
+				junkEnd = min(end, j.runs[i].end)
+				seed = &j.runs[i].seed
 			}
 		}
 
-		if first && junkStart == len(src) {
+		if first && junkStart == end {
 			return dst, false
 		}
 
@@ -112,4 +122,10 @@ func Pack(dst, src []byte, offset int64, compression bool, files Files) ([]byte,
 	}
 
 	return dst, true
+}
+
+// Pack appends src packed to dst, where src starts offset bytes into the
+// disc. It is the same as using Find and then packing all of src.
+func Pack(dst, src []byte, offset int64, compression bool, files Files) ([]byte, bool) {
+	return Find(src, offset, compression, files).Pack(dst, src, 0, len(src))
 }
