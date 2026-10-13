@@ -5,12 +5,11 @@ go 1.26.0
 require (
 	github.com/bodgit/plumbing v1.3.0
 	github.com/bodgit/rom v0.0.1
-	github.com/klauspost/compress v1.20.1
+	github.com/klauspost/compress v1.20.3
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/stretchr/testify v1.12.1
 	github.com/ulikunitz/xz v0.5.17
 	github.com/urfave/cli/v3 v3.14.0
-	golang.org/x/sync v0.24.0
 )
 
 require (
