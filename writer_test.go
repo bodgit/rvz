@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/bodgit/rvz"
+	"github.com/bodgit/rvz/internal/padding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -179,6 +180,44 @@ func TestCompressReuse(t *testing.T) {
 	assert.Equal(t, int64(4*sectorSize+sectorSize/2), fi.Size())
 }
 
+// TestCompressPadding checks that padding is stored as seeds, so a disc that
+// is mostly padding is tiny once compressed.
+func TestCompressPadding(t *testing.T) {
+	t.Parallel()
+
+	const sectors = 16
+
+	// The first sector is the disc header, then each sector is padding
+	// generated from its own seed after a few zeroes
+	iso := testDisc(sectors*sectorSize, false)
+
+	for i := 1; i < sectors; i++ {
+		seed := testDisc(padding.SeedSize+0x20, false)[0x20:]
+		skip := i % 3 * 12
+
+		rc, err := padding.NewReadCloser(bytes.NewReader(seed), int64(i*sectorSize+skip))
+		require.NoError(t, err)
+
+		clear(iso[i*sectorSize : i*sectorSize+skip])
+		_, err = io.ReadFull(rc, iso[i*sectorSize+skip:(i+1)*sectorSize])
+		require.NoError(t, err)
+		require.NoError(t, rc.Close())
+	}
+
+	for _, method := range []uint32{rvz.MethodNone, rvz.MethodZstandard} {
+		path, err := compress(t, iso, rvz.WithCompression(method, rvz.DefaultLevel))
+		require.NoError(t, err)
+
+		assert.True(t, bytes.Equal(iso, readAll(t, path)), "disc image doesn't match")
+
+		// The headers and tables, the random first sector, and a seed
+		// for each other sector
+		fi, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Less(t, fi.Size(), int64(2*sectorSize+sectors*100))
+	}
+}
+
 func TestCompressErrors(t *testing.T) {
 	t.Parallel()
 
@@ -237,7 +276,12 @@ func TestRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 
 			require.NoError(t, rvz.Compress(f, iso, fi.Size()))
+
+			out, err := f.Stat()
+			require.NoError(t, err)
 			require.NoError(t, f.Close())
+
+			t.Logf("compressed %d bytes to %d bytes", fi.Size(), out.Size())
 
 			assert.Equal(t, redumpSHA1(t, disc.dat, disc.file), readSHA1(t, path))
 		})

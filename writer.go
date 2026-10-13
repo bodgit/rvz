@@ -8,6 +8,8 @@ import (
 	"io"
 
 	"github.com/bodgit/plumbing"
+	"github.com/bodgit/rvz/internal/fst"
+	"github.com/bodgit/rvz/internal/packed"
 	"github.com/bodgit/rvz/internal/util"
 	"github.com/bodgit/rvz/internal/zstd"
 )
@@ -113,7 +115,11 @@ type writer struct {
 	raw    []raw
 	group  []group
 
+	// Where each file on a GameCube disc is, to help find padding
+	files *fst.Files
+
 	compress compressFunc
+	packed   []byte
 	buf      []byte
 
 	// Groups that can be reused by later chunks with the same contents
@@ -201,6 +207,10 @@ func (cw *writer) setUpDisc() error {
 		cw.disc.DiscType = wii
 	case binary.BigEndian.Uint32(cw.disc.Header[gameCubeMagicOffset:]) == gameCubeMagic:
 		cw.disc.DiscType = gameCube
+
+		// The file system only makes finding padding more effective, so
+		// carry on without it if it can't be read
+		cw.files, _ = fst.Read(cw.ra, 0)
 	default:
 		return errInvalidDiscType
 	}
@@ -269,7 +279,7 @@ func (cw *writer) tablesSize() int64 {
 	return (n + util.SectorSize - 1) / util.SectorSize * util.SectorSize
 }
 
-// writeRaw stores each group of a raw data area uncompressed.
+// writeRaw stores each group of a raw data area.
 func (cw *writer) writeRaw(x *raw) error {
 	start := x.offset() - x.offset()%util.SectorSize
 	buf := make([]byte, cw.opts.chunkSize)
@@ -282,7 +292,7 @@ func (cw *writer) writeRaw(x *raw) error {
 			return fmt.Errorf("rvz: reading disc image: %w", err)
 		}
 
-		if err := cw.writeGroup(int(x.GroupIndex)+i, b); err != nil {
+		if err := cw.writeGroup(int(x.GroupIndex)+i, offset, b); err != nil {
 			return err
 		}
 	}
@@ -290,12 +300,13 @@ func (cw *writer) writeRaw(x *raw) error {
 	return nil
 }
 
-// writeGroup stores a chunk as group g. A chunk of zeroes is stored as an
-// empty group, and a chunk where every byte has the same value reuses an
-// earlier group with the same contents if there is one.
-func (cw *writer) writeGroup(g int, b []byte) error {
+// writeGroup stores a chunk, which starts offset bytes into the disc, as
+// group g. A chunk of zeroes is stored as an empty group, and a chunk where
+// every byte has the same value reuses an earlier group with the same
+// contents if there is one.
+func (cw *writer) writeGroup(g int, offset int64, b []byte) error {
 	if len(b) == 0 || !bytes.Equal(b[1:], b[:len(b)-1]) {
-		return cw.storeGroup(g, b)
+		return cw.storeGroup(g, offset, b)
 	}
 
 	// The offset of an empty group isn't used
@@ -313,19 +324,30 @@ func (cw *writer) writeGroup(g int, b []byte) error {
 		return nil
 	}
 
-	if err := cw.storeGroup(g, b); err != nil {
+	if err := cw.storeGroup(g, offset, b); err != nil {
 		return err
 	}
 
+	// As every byte is the same the chunk can't contain padding, so it
+	// doesn't depend on its offset and is safe to reuse
 	cw.reuse[key] = cw.group[g]
 
 	return nil
 }
 
-// storeGroup writes the data for group g, compressed if that makes it
-// smaller, recording where it is, and pads it to the next 4 byte boundary.
-func (cw *writer) storeGroup(g int, b []byte) error {
-	size := uint32(len(b)) //nolint:gosec // at most 2 MiB
+// storeGroup writes the data for group g, with any padding replaced by
+// seeds and then compressed if that makes it smaller, recording where it is,
+// and pads it to the next 4 byte boundary.
+func (cw *writer) storeGroup(g int, offset int64, b []byte) error {
+	var packedSize uint32
+
+	if p, ok := packed.Pack(cw.packed[:0], b, offset, cw.compress != nil, cw.files); ok {
+		cw.packed = p
+		b = p
+		packedSize = uint32(len(p)) //nolint:gosec // at most a little over 2 MiB
+	}
+
+	size := uint32(len(b)) //nolint:gosec // at most a little over 2 MiB
 
 	if cw.compress != nil {
 		cw.buf = cw.compress(cw.buf[:0], b)
@@ -337,8 +359,9 @@ func (cw *writer) storeGroup(g int, b []byte) error {
 	}
 
 	cw.group[g] = group{
-		Offset: uint32(cw.written >> 2), //nolint:gosec // checked below
-		Size:   size,
+		Offset:     uint32(cw.written >> 2), //nolint:gosec // checked below
+		Size:       size,
+		PackedSize: packedSize,
 	}
 
 	if cw.written>>2 > int64(^uint32(0)) {
