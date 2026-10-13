@@ -45,6 +45,27 @@ func testDisc(size int, wii bool) []byte {
 	return b
 }
 
+// readAll returns the disc image read from the RVZ image at path.
+func readAll(t *testing.T, path string) []byte {
+	t.Helper()
+
+	f, err := os.Open(path) //nolint:gosec // temporary file
+	require.NoError(t, err)
+
+	defer func() {
+		_ = f.Close()
+	}()
+
+	r, err := rvz.NewReader(f)
+	require.NoError(t, err)
+
+	b, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, r.Size(), int64(len(b)))
+
+	return b
+}
+
 // compress compresses iso into a temporary file and returns its path.
 func compress(t *testing.T, iso []byte, opts ...rvz.Option) (string, error) {
 	t.Helper()
@@ -91,19 +112,7 @@ func TestCompress(t *testing.T) {
 			path, err := compress(t, iso, table.opts...)
 			require.NoError(t, err)
 
-			f, err := os.Open(path) //nolint:gosec // temporary file
-			require.NoError(t, err)
-
-			defer func() {
-				_ = f.Close()
-			}()
-
-			r, err := rvz.NewReader(f)
-			require.NoError(t, err)
-			assert.Equal(t, int64(len(iso)), r.Size())
-
-			got, err := io.ReadAll(r)
-			require.NoError(t, err)
+			got := readAll(t, path)
 			assert.True(t, bytes.Equal(iso, got), "disc image doesn't match")
 		})
 	}
@@ -138,6 +147,36 @@ func TestCompressSize(t *testing.T) {
 			assert.LessOrEqual(t, fi.Size(), table.max)
 		})
 	}
+}
+
+// TestCompressReuse checks that chunks of zeroes take no space and chunks
+// where every byte is the same are stored once for each size.
+func TestCompressReuse(t *testing.T) {
+	t.Parallel()
+
+	// Random, zero, 0xff, zero, 0xff, random and then half a sector of
+	// 0xff, which can't reuse the earlier groups as it's shorter
+	iso := testDisc(6*sectorSize+sectorSize/2, false)
+
+	for _, i := range []int{1, 3} {
+		clear(iso[i*sectorSize : (i+1)*sectorSize])
+	}
+
+	for _, i := range []int{2, 4, 6} {
+		copy(iso[i*sectorSize:], bytes.Repeat([]byte{0xff}, sectorSize))
+	}
+
+	path, err := compress(t, iso, rvz.WithChunkSize(rvz.ChunkSize32KiB), rvz.WithCompression(rvz.MethodNone, 0))
+	require.NoError(t, err)
+
+	got := readAll(t, path)
+	assert.True(t, bytes.Equal(iso, got), "disc image doesn't match")
+
+	// One sector for the headers and tables, two random sectors, one
+	// sector of 0xff and the half sector of 0xff
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4*sectorSize+sectorSize/2), fi.Size())
 }
 
 func TestCompressErrors(t *testing.T) {

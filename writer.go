@@ -95,6 +95,12 @@ func (o *options) compressor() (compressFunc, func() error, error) {
 	return c.Compress, c.Close, nil
 }
 
+// A reuseKey identifies a chunk where every byte has the same value.
+type reuseKey struct {
+	size  int
+	value byte
+}
+
 // A writer holds the state of a single conversion.
 type writer struct {
 	w    io.WriteSeeker
@@ -110,6 +116,9 @@ type writer struct {
 	compress compressFunc
 	buf      []byte
 
+	// Groups that can be reused by later chunks with the same contents
+	reuse map[reuseKey]group
+
 	written int64
 }
 
@@ -118,9 +127,10 @@ type writer struct {
 // back with NewReader to give an identical disc image.
 func Compress(w io.WriteSeeker, ra io.ReaderAt, size int64, opts ...Option) error {
 	cw := &writer{
-		w:    w,
-		ra:   ra,
-		size: size,
+		w:     w,
+		ra:    ra,
+		size:  size,
+		reuse: make(map[reuseKey]group),
 		opts: options{
 			chunkSize: DefaultChunkSize,
 			method:    DefaultMethod,
@@ -280,9 +290,41 @@ func (cw *writer) writeRaw(x *raw) error {
 	return nil
 }
 
-// writeGroup writes the data for a group, compressed if that makes it
-// smaller, recording where it is, and pads it to the next 4 byte boundary.
+// writeGroup stores a chunk as group g. A chunk of zeroes is stored as an
+// empty group, and a chunk where every byte has the same value reuses an
+// earlier group with the same contents if there is one.
 func (cw *writer) writeGroup(g int, b []byte) error {
+	if len(b) == 0 || !bytes.Equal(b[1:], b[:len(b)-1]) {
+		return cw.storeGroup(g, b)
+	}
+
+	// The offset of an empty group isn't used
+	if b[0] == 0 {
+		cw.group[g] = group{}
+
+		return nil
+	}
+
+	key := reuseKey{size: len(b), value: b[0]}
+
+	if e, ok := cw.reuse[key]; ok {
+		cw.group[g] = e
+
+		return nil
+	}
+
+	if err := cw.storeGroup(g, b); err != nil {
+		return err
+	}
+
+	cw.reuse[key] = cw.group[g]
+
+	return nil
+}
+
+// storeGroup writes the data for group g, compressed if that makes it
+// smaller, recording where it is, and pads it to the next 4 byte boundary.
+func (cw *writer) storeGroup(g int, b []byte) error {
 	size := uint32(len(b)) //nolint:gosec // at most 2 MiB
 
 	if cw.compress != nil {
