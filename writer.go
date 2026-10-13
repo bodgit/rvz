@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"runtime"
 
 	"github.com/bodgit/plumbing"
 	"github.com/bodgit/rvz/internal/fst"
@@ -135,10 +136,8 @@ type writer struct {
 	// Where each file on a GameCube disc is, to help find padding
 	files *fst.Files
 
+	// Safe for concurrent use
 	compress compressFunc
-	packed   []byte
-	joined   []byte
-	buf      []byte
 
 	// Groups that can be reused by later chunks with the same contents
 	reuse map[reuseKey]group
@@ -200,18 +199,8 @@ func (cw *writer) convert() error {
 		return err
 	}
 
-	for _, a := range cw.areas {
-		var err error
-
-		if a.raw >= 0 {
-			err = cw.writeRaw(&cw.raw[a.raw])
-		} else {
-			err = cw.writePartData(a.p, a.d)
-		}
-
-		if err != nil {
-			return err
-		}
+	if err := cw.writeGroups(cw.jobs()); err != nil {
+		return err
 	}
 
 	return cw.writeTables(reserved)
@@ -336,115 +325,234 @@ func (cw *writer) tablesSize() int64 {
 	return alignUp(n, util.SectorSize)
 }
 
-// writeRaw stores each group of a raw data area.
-func (cw *writer) writeRaw(x *raw) error {
+// A prepared group is a group ready to be written.
+type prepared struct {
+	g          int
+	data       []byte // as stored, which is any exceptions then the data
+	size       uint32 // including whether it is compressed
+	packedSize uint32
+
+	// An empty group is all zeroes and has no data
+	empty bool
+
+	// A group where every byte is the same can be shared by later
+	// chunks with the same contents
+	reuse *reuseKey
+}
+
+// A job prepares one or more groups, and is run concurrently with others.
+type job func() ([]prepared, error)
+
+// jobs returns the jobs to prepare every group, in order.
+func (cw *writer) jobs() []job {
+	var jobs []job
+
+	for _, a := range cw.areas {
+		if a.raw >= 0 {
+			jobs = append(jobs, cw.rawJobs(&cw.raw[a.raw])...)
+		} else {
+			jobs = append(jobs, cw.partDataJobs(a.p, a.d)...)
+		}
+	}
+
+	return jobs
+}
+
+// writeGroups runs the jobs with up to GOMAXPROCS running ahead of the
+// writer, and writes the groups they prepare in order.
+func (cw *writer) writeGroups(jobs []job) error {
+	type result struct {
+		groups []prepared
+		err    error
+		done   chan struct{}
+	}
+
+	var (
+		pending []*result
+		next    int
+	)
+
+	start := func() {
+		for next < len(jobs) && len(pending) < runtime.GOMAXPROCS(0) {
+			r := &result{done: make(chan struct{})}
+
+			go func(j job) {
+				defer close(r.done)
+
+				r.groups, r.err = j()
+			}(jobs[next])
+
+			pending = append(pending, r)
+			next++
+		}
+	}
+
+	// Don't leave any jobs running on an error
+	wait := func() {
+		for _, r := range pending {
+			<-r.done
+		}
+	}
+
+	for start(); len(pending) > 0; start() {
+		r := pending[0]
+		pending = pending[1:]
+
+		<-r.done
+
+		if r.err != nil {
+			wait()
+
+			return r.err
+		}
+
+		for _, p := range r.groups {
+			if err := cw.writeGroup(p); err != nil {
+				wait()
+
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// rawJobs returns the jobs for a raw data area, each covering up to 2 MiB of
+// chunks.
+func (cw *writer) rawJobs(x *raw) []job {
 	start := x.offset() - x.offset()%util.SectorSize
+	perJob := max(groupSize/cw.opts.chunkSize, 1)
+
+	jobs := make([]job, 0, ceilDiv(uint64(x.NumGroup), uint64(perJob)))
+
+	for first := 0; first < int(x.NumGroup); first += perJob {
+		n := min(perJob, int(x.NumGroup)-first)
+
+		jobs = append(jobs, func() ([]prepared, error) {
+			return cw.prepareRaw(x, start, first, n)
+		})
+	}
+
+	return jobs
+}
+
+// prepareRaw prepares n groups of a raw data area, starting with the first.
+func (cw *writer) prepareRaw(x *raw, start int64, first, n int) ([]prepared, error) {
+	groups := make([]prepared, 0, n)
 	buf := make([]byte, cw.opts.chunkSize)
 
-	for i := range int(x.NumGroup) {
+	for i := first; i < first+n; i++ {
 		offset := start + int64(i)*int64(cw.opts.chunkSize)
 		b := buf[:min(int64(cw.opts.chunkSize), x.end()-offset)]
 
 		if _, err := cw.ra.ReadAt(b, offset); err != nil {
-			return fmt.Errorf("rvz: reading disc image: %w", err)
+			return nil, fmt.Errorf("rvz: reading disc image: %w", err)
 		}
 
-		if err := cw.writeGroup(int(x.GroupIndex)+i, offset, b); err != nil {
-			return err
+		groups = append(groups, cw.prepareRawGroup(int(x.GroupIndex)+i, offset, b))
+	}
+
+	return groups, nil
+}
+
+// prepareRawGroup prepares a chunk, which starts offset bytes into the disc,
+// as group g. A chunk of zeroes is stored as an empty group, and a chunk
+// where every byte has the same value can reuse an earlier group with the
+// same contents. Otherwise any padding is replaced by seeds.
+func (cw *writer) prepareRawGroup(g int, offset int64, b []byte) prepared {
+	if len(b) > 0 && bytes.Equal(b[1:], b[:len(b)-1]) {
+		if b[0] == 0 {
+			return prepared{g: g, empty: true}
 		}
+
+		// As every byte is the same the chunk can't contain padding,
+		// so it doesn't depend on its offset and is safe to reuse
+		p := cw.prepareGroup(g, nil, b, 0)
+		p.reuse = &reuseKey{size: len(b), value: b[0]}
+
+		return p
 	}
 
-	return nil
-}
-
-// writeGroup stores a chunk, which starts offset bytes into the disc, as
-// group g. A chunk of zeroes is stored as an empty group, and a chunk where
-// every byte has the same value reuses an earlier group with the same
-// contents if there is one.
-func (cw *writer) writeGroup(g int, offset int64, b []byte) error {
-	if len(b) == 0 || !bytes.Equal(b[1:], b[:len(b)-1]) {
-		return cw.storeRawGroup(g, offset, b)
-	}
-
-	// The offset of an empty group isn't used
-	if b[0] == 0 {
-		cw.group[g] = group{}
-
-		return nil
-	}
-
-	key := reuseKey{size: len(b), value: b[0]}
-
-	if e, ok := cw.reuse[key]; ok {
-		cw.group[g] = e
-
-		return nil
-	}
-
-	if err := cw.storeRawGroup(g, offset, b); err != nil {
-		return err
-	}
-
-	// As every byte is the same the chunk can't contain padding, so it
-	// doesn't depend on its offset and is safe to reuse
-	cw.reuse[key] = cw.group[g]
-
-	return nil
-}
-
-// storeRawGroup writes the data for raw data group g with any padding
-// replaced by seeds.
-func (cw *writer) storeRawGroup(g int, offset int64, b []byte) error {
 	var packedSize uint32
 
-	if p, ok := packed.Pack(cw.packed[:0], b, offset, cw.compress != nil, cw.files); ok {
-		cw.packed = p
-		b = p
-		packedSize = uint32(len(p)) //nolint:gosec // at most a little over 2 MiB
+	if pb, ok := packed.Pack(nil, b, offset, cw.compress != nil, cw.files); ok {
+		b = pb
+		packedSize = uint32(len(pb)) //nolint:gosec // at most a little over 2 MiB
 	}
 
-	return cw.storeGroup(g, nil, b, packedSize)
+	return cw.prepareGroup(g, nil, b, packedSize)
 }
 
-// storeGroup writes the data for group g, which is any hash exceptions
-// followed by the data itself, compressed if that makes it smaller. It
-// records where the group is and pads it to the next 4 byte boundary.
-func (cw *writer) storeGroup(g int, exceptions, b []byte, packedSize uint32) error {
+// prepareGroup prepares group g, which is any hash exceptions followed by
+// the data itself, compressed if that makes it smaller.
+func (cw *writer) prepareGroup(g int, exceptions, b []byte, packedSize uint32) prepared {
 	// Uncompressed, the exceptions are padded so the data starts on a 4
 	// byte boundary
-	padding := int(alignUp(int64(len(exceptions)), 4)) - len(exceptions)
-	parts := [][]byte{exceptions, make([]byte, padding), b}
-	size := uint32(len(exceptions) + padding + len(b)) //nolint:gosec // a little over 2 MiB
+	padded := int(alignUp(int64(len(exceptions)), 4))
+
+	data := make([]byte, padded, padded+len(b))
+	copy(data, exceptions)
+	data = append(data, b...)
+
+	p := prepared{
+		g:          g,
+		data:       data,
+		size:       uint32(len(data)), //nolint:gosec // a little over 2 MiB
+		packedSize: packedSize,
+	}
 
 	if cw.compress != nil {
+		// Compressed, the exceptions aren't padded
 		src := b
 		if len(exceptions) > 0 {
-			cw.joined = append(append(cw.joined[:0], exceptions...), b...)
-			src = cw.joined
+			src = append(append(make([]byte, 0, len(exceptions)+len(b)), exceptions...), b...)
 		}
 
-		cw.buf = cw.compress(cw.buf[:0], src)
-
-		if len(cw.buf) < int(size) {
-			parts = [][]byte{cw.buf}
-			size = uint32(len(cw.buf)) | compressed //nolint:gosec // smaller than the chunk
+		if c := cw.compress(nil, src); len(c) < len(data) {
+			p.data = c
+			p.size = uint32(len(c)) | compressed //nolint:gosec // smaller than the chunk
 		}
 	}
 
-	cw.group[g] = group{
-		Offset:     uint32(cw.written >> 2), //nolint:gosec // checked below
-		Size:       size,
-		PackedSize: packedSize,
+	return p
+}
+
+// writeGroup writes a prepared group, recording where it is, and pads it to
+// the next 4 byte boundary. Empty groups take no space, and groups that can
+// be reused are only written the first time.
+func (cw *writer) writeGroup(p prepared) error {
+	// The offset of an empty group isn't used
+	if p.empty {
+		cw.group[p.g] = group{}
+
+		return nil
+	}
+
+	if p.reuse != nil {
+		if e, ok := cw.reuse[*p.reuse]; ok {
+			cw.group[p.g] = e
+
+			return nil
+		}
 	}
 
 	if cw.written>>2 > int64(^uint32(0)) {
 		return errFileTooLarge
 	}
 
-	for _, part := range parts {
-		if err := cw.write(part); err != nil {
-			return err
-		}
+	cw.group[p.g] = group{
+		Offset:     uint32(cw.written >> 2), //nolint:gosec // checked above
+		Size:       p.size,
+		PackedSize: p.packedSize,
+	}
+
+	if p.reuse != nil {
+		cw.reuse[*p.reuse] = cw.group[p.g]
+	}
+
+	if err := cw.write(p.data); err != nil {
+		return err
 	}
 
 	return cw.padTo4()

@@ -22,9 +22,10 @@ type Compressor struct {
 // NewCompressor returns a new Compressor using the zstd compression level,
 // which is mapped to the nearest level the encoder supports.
 func NewCompressor(level int) (*Compressor, error) {
+	// EncodeAll can only run as many times at once as there are
+	// encoders, which defaults to GOMAXPROCS to match the writer
 	enc, err := zstd.NewWriter(nil,
-		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)),
-		zstd.WithEncoderConcurrency(1))
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)))
 	if err != nil {
 		return nil, fmt.Errorf("zstd: %w", err)
 	}
